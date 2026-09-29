@@ -227,9 +227,27 @@ function computeTotalPayrollCost(c){
     + getWorkPassAdminFee(c);
 }
 
-function computeTalentRevenue(c){
+// Working days for daily-rate billing: every Mon-Fri in the month. Public holidays and leave
+// are still billed to the client, so they are not subtracted. Mirrors weekdaysInMonth() server-side.
+function weekdaysInMonth(month = today){
+  const y = month.getFullYear(), m = month.getMonth();
+  const daysInMonth = new Date(y, m+1, 0).getDate();
+  let count = 0;
+  for(let d = 1; d <= daysInMonth; d++){
+    const dow = new Date(y, m, d).getDay();
+    if(dow !== 0 && dow !== 6) count++;
+  }
+  return count;
+}
+
+function computeTalentRevenue(c, month = today){
   if(c.chargeRate === null || c.chargeRate === undefined) return null;
-  return c.billingType === "Daily" ? c.chargeRate * 22 : c.chargeRate;
+  return c.billingType === "Daily" ? c.chargeRate * weekdaysInMonth(month) : c.chargeRate;
+}
+
+function chargeRateLabel(c){
+  if(c.chargeRate === null || c.chargeRate === undefined) return '-';
+  return c.billingType === "Daily" ? `${fmtMoney(c.chargeRate)}/day` : `${fmtMoney(c.chargeRate)}/month`;
 }
 
 function seededVariance(seed, monthOffset){
@@ -247,7 +265,7 @@ function computeMargin(c){
 }
 
 function randomTalentBillingFields(c){
-  const workingDays = 22;
+  const workingDays = weekdaysInMonth();
   const talentInvoiceAmount = c.billingType === "Daily" ? c.chargeRate * workingDays : c.chargeRate;
   const talentInvoiceNumber = `INV-${today.getFullYear()}-${String(c.id).padStart(5,'0')}`;
   const talentInvoiceDate = addDays(today, -randInt(0,45));
@@ -1126,7 +1144,7 @@ document.getElementById('confirmExportBtn').addEventListener('click', ()=>{
 /* ---------- Import from Excel Modal ----------
    Reads a client tracking-sheet (.xlsx/.csv) matching the format the ops team already uses
    (see Fujitsu Asia Tracking Sheet.xlsx): Name, Position, Basic Salary, Total Employment Cost,
-   Monthly Charge Rate, FIN No., Type of Pass, Entity, Work Pass Issuance/Expiry Date,
+   Monthly Charge Rate (or Daily Charge Rate for daily-billed talents), FIN No., Type of Pass, Entity, Work Pass Issuance/Expiry Date,
    Contract Start/End Date, Hiring Name, Verifier Email Address, Dept, Quotation Number,
    PO number, Owner. Column order is matched by header name (not position), so extra/reordered
    columns don't break it. Actual create-vs-update + dedup logic lives server-side
@@ -1142,6 +1160,7 @@ const IMPORT_HEADER_MAP = {
   'total employment cost': 'totalEmploymentCost',
   'service fee': 'serviceFee',
   'monthly charge rate': 'monthlyChargeRate',
+  'daily charge rate': 'dailyChargeRate',
   'fin no.': 'finNo',
   'type of pass': 'typeOfPass',
   entity: 'entity',
@@ -1157,7 +1176,7 @@ const IMPORT_HEADER_MAP = {
   owner: 'owner',
 };
 const IMPORT_DATE_KEYS = new Set(['workPassIssuanceDate', 'workPassExpiryDate', 'contractStartDate', 'contractEndDate']);
-const IMPORT_NUMBER_KEYS = new Set(['basicSalary', 'levy', 'medicalInsuranceCost', 'skillsDevelopmentLevy', 'wica', 'totalEmploymentCost', 'serviceFee', 'monthlyChargeRate']);
+const IMPORT_NUMBER_KEYS = new Set(['basicSalary', 'levy', 'medicalInsuranceCost', 'skillsDevelopmentLevy', 'wica', 'totalEmploymentCost', 'serviceFee', 'monthlyChargeRate', 'dailyChargeRate']);
 // CSV cells are always plain text, so a currency-formatted number ("S$8,000.00") reads back
 // as a string that plain Number() can't parse (returns NaN, which then serializes to null
 // and silently defaults to 0 server-side). Strip everything except digits/./- before parsing.
@@ -1566,10 +1585,20 @@ document.getElementById('cancelExportClientsModal').addEventListener('click', cl
 exportClientsModalOverlay.addEventListener('click', closeExportClientsModalFn);
 
 /* ---------- Add Talent Modal ---------- */
+// Add ('f') and Edit ('e') forms share a Billing Type select that relabels the charge rate input.
+function syncChargeRateLabel(prefix){
+  const daily = document.getElementById(`${prefix}_billingType`).value === 'Daily';
+  document.getElementById(`${prefix}_chargeRateLabel`).textContent = daily ? 'Charge Rate (Daily, S$)' : 'Charge Rate (Monthly, S$)';
+  document.getElementById(`${prefix}_chargeRate`).placeholder = daily ? '850' : '8500';
+}
+['f','e'].forEach(prefix=>{
+  document.getElementById(`${prefix}_billingType`).addEventListener('change', ()=>syncChargeRateLabel(prefix));
+});
 const modalOverlay = document.getElementById('modalOverlay');
 const addModal = document.getElementById('addModal');
 function openAddModal(){
   document.getElementById('addTalentForm').reset();
+  syncChargeRateLabel('f');
   document.getElementById('f_contractStart').value = toISO(today);
   document.getElementById('f_contractEnd').value = toISO(addDays(today, 180));
   document.getElementById('f_passExpiry').value = toISO(addDays(today, 365));
@@ -1604,6 +1633,7 @@ document.getElementById('addTalentForm').addEventListener('submit', async e=>{
     entity: document.getElementById('f_entity').value,
     salary: Number(document.getElementById('f_salary').value),
     chargeRate: Number(document.getElementById('f_chargeRate').value),
+    billingType: document.getElementById('f_billingType').value,
     contractStart: document.getElementById('f_contractStart').value,
     contractEnd: document.getElementById('f_contractEnd').value,
     passExpiry: document.getElementById('f_passExpiry').value,
@@ -1668,6 +1698,8 @@ function openEditPanel(id){
   `;
   document.getElementById('e_salary').value = c.salary;
   document.getElementById('e_chargeRate').value = c.chargeRate;
+  document.getElementById('e_billingType').value = c.billingType || 'Monthly';
+  syncChargeRateLabel('e');
   document.getElementById('e_contractStart').value = toISO(c.contractStart);
   document.getElementById('e_contractEnd').value = toISO(c.contractEnd);
   document.getElementById('e_passExpiry').value = toISO(c.passExpiry);
@@ -1689,6 +1721,7 @@ document.getElementById('editForm').addEventListener('submit', async e=>{
   if(!c) return;
   const salary = Number(document.getElementById('e_salary').value);
   const chargeRate = Number(document.getElementById('e_chargeRate').value);
+  const billingType = document.getElementById('e_billingType').value;
   const contractStart = document.getElementById('e_contractStart').value;
   const contractEnd = document.getElementById('e_contractEnd').value;
   const passExpiry = document.getElementById('e_passExpiry').value;
@@ -1696,7 +1729,7 @@ document.getElementById('editForm').addEventListener('submit', async e=>{
     // Sequential (not Promise.all) so each response reflects every prior write — the last one
     // is the authoritative merged state to apply locally.
     await api.talents.updatePayroll(c.id, { salary });
-    await api.talents.updateBilling(c.id, { chargeRate });
+    await api.talents.updateBilling(c.id, { chargeRate, billingType });
     let latest = await api.talents.updateContract(c.id, { contractStart, contractEnd });
     // Talents imported without a pass type have no work pass record to update.
     if(c.workPassType && passExpiry) latest = await api.talents.updateWorkPass(c.id, { passExpiry });
@@ -2091,7 +2124,7 @@ function renderTalentProfile(c){
   /* ----- Payroll & Cost tab (breakdown, read-only) ----- */
   document.getElementById('profileFinancials').innerHTML = [
     dlRow("Salary (Monthly)", c.salary ? fmtMoney(c.salary) : '-'),
-    dlRow("Charge Rate (Daily)", fmtMoney(c.chargeRate)+"/day"),
+    dlRow("Charge Rate", chargeRateLabel(c)),
     dlRow("Contract Start", fmtDate(c.contractStart)),
     dlRow("Contract End", `<span class="${contractAlert?'date-alert':''}">${fmtDate(c.contractEnd)}${contractAlert?` (${c.contractDaysLeft}d)`:''}</span>`),
     dlRow("Billing Type", c.billingType),
@@ -2130,7 +2163,10 @@ function renderTalentProfile(c){
   } else {
     document.getElementById('profileBilling').innerHTML = [
       dlRow("Billing Type", c.billingType),
-      dlRow("Bill Rate", fmtMoney(c.chargeRate)),
+      dlRow("Bill Rate", chargeRateLabel(c)),
+      ...(c.billingType === "Daily" && c.chargeRate !== null && c.chargeRate !== undefined
+        ? [dlRow("Monthly Charge (This Month)", `${fmtMoney(computeTalentRevenue(c))}<div class="text-[10px] text-[var(--muted)] font-normal">${weekdaysInMonth()} working days × ${fmtMoney(c.chargeRate)}</div>`)]
+        : []),
       dlRow("Invoice Number", c.talentInvoiceNumber),
       dlRow("Invoice Date", fmtDate(c.talentInvoiceDate)),
       dlRow("Invoice Amount", fmtMoney(c.talentInvoiceAmount)),
@@ -3705,7 +3741,10 @@ function financeTalentFigures(c, monthOffset){
     // omitting it made imported totals silently collapse to just the basic salary.
     totalEmploymentCost: salary + levy + cpf + sdl + wica + insurance + otherStatutoryCosts,
     totalCost: computeTotalPayrollCost(c)*factor,
-    revenue: computeTalentRevenue(c)*revFactor,
+    // Daily-rate talents bill the real weekday count of the viewed month, so no estimate variance.
+    revenue: c.billingType === "Daily"
+      ? computeTalentRevenue(c, new Date(today.getFullYear(), today.getMonth()-monthOffset, 1))
+      : computeTalentRevenue(c)*revFactor,
   };
 }
 
@@ -3905,6 +3944,7 @@ function initBillingFilters(){
     exportRowsToExcel('talent-billing.xlsx', [
       { label: 'Talent Name', value: c=>c.name },
       { label: 'Client / Project', value: c=>`${c.client} - ${dash(c.projectType)}` },
+      { label: 'Billing Type', value: c=>c.billingType },
       { label: 'Charge Rate', value: c=>c.chargeRate },
       { label: 'Invoice Number', value: c=>c.talentInvoiceNumber },
       { label: 'Invoice Date', value: c=>xlDate(c.talentInvoiceDate) },

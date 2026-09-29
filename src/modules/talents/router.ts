@@ -136,6 +136,7 @@ interface ImportRow {
   totalEmploymentCost?: number;
   serviceFee?: number;
   monthlyChargeRate?: number;
+  dailyChargeRate?: number;
   finNo?: string;
   typeOfPass?: string;
   entity?: string;
@@ -204,7 +205,10 @@ talentsRouter.post(
       const otherStatutoryCosts = totalCost !== null
         ? Math.max(0, totalCost - salary - cpf - levy - skillsDevelopmentLevy - wica - medicalInsuranceCost)
         : 0;
-      const chargeRate = Number(r.monthlyChargeRate) || 0;
+      // A "Daily Charge Rate" column marks the talent as daily-billed (rate x weekdays in the month).
+      const dailyChargeRate = Number(r.dailyChargeRate) || 0;
+      const chargeRate = dailyChargeRate || Number(r.monthlyChargeRate) || 0;
+      const billingType = dailyChargeRate ? "Daily" : "Monthly";
 
       const poQuotationParts: string[] = [];
       if (r.quotationNumber) poQuotationParts.push(`Quotation: ${r.quotationNumber}`);
@@ -237,7 +241,7 @@ talentsRouter.post(
             data: { salary, cpf, levy, skillsDevelopmentLevy, wica, medicalInsuranceCost, serviceFee, otherStatutoryCosts },
           });
         }
-        if (chargeRate) await prisma.talentBilling.update({ where: { talentId: existing.id }, data: { chargeRate } });
+        if (chargeRate) await prisma.talentBilling.update({ where: { talentId: existing.id }, data: { chargeRate, billingType } });
 
         if (hasWorkPass) {
           const wpData: Record<string, unknown> = { workPassType: passTypeRaw };
@@ -288,7 +292,7 @@ talentsRouter.post(
             },
           });
         }
-        await prisma.talentBilling.create({ data: { talentId: talent.id, chargeRate, billingType: "Monthly", invoiceStatus: "Pending" } });
+        await prisma.talentBilling.create({ data: { talentId: talent.id, chargeRate, billingType, invoiceStatus: "Pending" } });
         created++;
       }
     }

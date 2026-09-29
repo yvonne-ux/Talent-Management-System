@@ -72,8 +72,22 @@ export function totalEmployerCost(payroll: PayrollLike, workPassType: string): n
   );
 }
 
-export function talentRevenue(chargeRate: number, billingType: string): number {
-  return billingType === "Daily" ? chargeRate * 22 : chargeRate;
+// Working days for daily-rate billing: every Mon-Fri in the month. Public holidays and leave
+// are still billed to the client, so they are not subtracted.
+export function weekdaysInMonth(month: Date = new Date()): number {
+  const year = month.getFullYear();
+  const m = month.getMonth();
+  const daysInMonth = new Date(year, m + 1, 0).getDate();
+  let count = 0;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dow = new Date(year, m, d).getDay();
+    if (dow !== 0 && dow !== 6) count++;
+  }
+  return count;
+}
+
+export function talentRevenue(chargeRate: number, billingType: string, month: Date = new Date()): number {
+  return billingType === "Daily" ? chargeRate * weekdaysInMonth(month) : chargeRate;
 }
 
 export function marginPercent(revenue: number, totalCost: number): number {
