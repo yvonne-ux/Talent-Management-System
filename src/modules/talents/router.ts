@@ -152,6 +152,9 @@ interface ImportRow {
   owner?: string;
 }
 
+// Values in the Type of Pass column that mean the talent has no work pass on file.
+const NO_WORK_PASS_MARKERS = new Set(["not applicable", "na", "n/a", "-"]);
+
 talentsRouter.post(
   "/import",
   asyncHandler(async (req, res) => {
@@ -190,7 +193,7 @@ talentsRouter.post(
       const contractEnd = r.contractEndDate ? new Date(r.contractEndDate) : new Date(today.getFullYear() + 1, today.getMonth(), today.getDate());
 
       const passTypeRaw = r.typeOfPass ? String(r.typeOfPass).trim() : "";
-      const hasWorkPass = !!passTypeRaw && passTypeRaw.toLowerCase() !== "not applicable";
+      const hasWorkPass = !!passTypeRaw && !NO_WORK_PASS_MARKERS.has(passTypeRaw.toLowerCase());
 
       const salary = Number(r.basicSalary) || 0;
       const cpf = isCpfEligible(passTypeRaw) ? Math.round(salary * 0.17) : 0;
