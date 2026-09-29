@@ -4070,7 +4070,7 @@ function renderBilling(){
       </td>
       <td class="px-4 py-1 text-[var(--muted)] whitespace-nowrap">${c.client} – ${dash(c.projectType)}</td>
       <td class="px-4 py-1 whitespace-nowrap">${fmtMoney(c.chargeRate)}</td>
-      <td class="px-4 py-1 whitespace-nowrap">${c.talentInvoiceNumber}</td>
+      <td class="px-4 py-1 whitespace-nowrap">${dash(c.talentInvoiceNumber)}</td>
       <td class="px-4 py-1 whitespace-nowrap">${fmtDate(c.talentInvoiceDate)}</td>
       <td class="px-4 py-1 whitespace-nowrap">${fmtMoney(c.talentInvoiceAmount)}</td>
       <td class="px-4 py-1 whitespace-nowrap"><span class="pill" style="${statusPillStyle(c.invoiceStatus)}">${c.invoiceStatus}</span></td>
@@ -4362,7 +4362,7 @@ function renderOperations(){
       <td class="px-4 py-1 whitespace-nowrap">${c.annualLeaveBalance} days</td>
       <td class="px-4 py-1 whitespace-nowrap">${c.sickLeaveBalance} days</td>
       <td class="px-4 py-1 whitespace-nowrap">${c.offInLieuBalance} days</td>
-      <td class="px-4 py-1 whitespace-nowrap"><span class="pill" style="${statusPillStyle(c.leaveApprovalStatus)}">${c.leaveApprovalStatus}</span></td>
+      <td class="px-4 py-1 whitespace-nowrap"><span class="pill" style="${statusPillStyle(c.leaveApprovalStatus)}">${dash(c.leaveApprovalStatus)}</span></td>
       <td class="px-4 py-1 whitespace-nowrap"><span class="pill" style="${statusPillStyle(c.timesheetSubmitted)}">${c.timesheetSubmitted}</span></td>
       <td class="px-4 py-1 whitespace-nowrap"><span class="pill" style="${statusPillStyle(c.clientApproved)}">${c.clientApproved}</span></td>
     </tr>`;
@@ -4822,11 +4822,11 @@ function renderClients(){
         <td class="px-4 py-1 font-medium">
           <span class="client-name-link cursor-pointer hover:underline hover:text-[var(--blue-dark)]" data-client="${r.client}">${r.client}</span>
         </td>
-        <td class="px-4 py-1 text-[var(--muted)] whitespace-nowrap">${r.industry}</td>
-        <td class="px-4 py-1 whitespace-nowrap">${r.contactPerson}</td>
-        <td class="px-4 py-1 whitespace-nowrap">${r.contactEmail}</td>
-        <td class="px-4 py-1 whitespace-nowrap">${r.contactNumber}</td>
-        <td class="px-4 py-1 whitespace-nowrap">${r.accountManager}</td>
+        <td class="px-4 py-1 text-[var(--muted)] whitespace-nowrap">${dash(r.industry)}</td>
+        <td class="px-4 py-1 whitespace-nowrap">${dash(r.contactPerson)}</td>
+        <td class="px-4 py-1 whitespace-nowrap">${dash(r.contactEmail)}</td>
+        <td class="px-4 py-1 whitespace-nowrap">${dash(r.contactNumber)}</td>
+        <td class="px-4 py-1 whitespace-nowrap">${dash(r.accountManager)}</td>
         <td class="px-4 py-1 whitespace-nowrap">${r.talentCount}</td>
         <td class="px-4 py-1 whitespace-nowrap"><span class="pill" style="background:${statusBg};color:${statusText}">${r.status}</span></td>
       </tr>`;
@@ -6472,7 +6472,7 @@ function billingViewHtml(b){
   return `
     <div class="grid md:grid-cols-2 gap-x-10 gap-y-2 text-sm">
       ${dlRow("Billing Type", b.billingType)}
-      ${dlRow("Charge Rate / Billing Rate", `${b.currency} ${b.chargeRate.toLocaleString()}`)}
+      ${dlRow("Charge Rate / Billing Rate", `${b.chargeRate != null ? `${b.currency} ${b.chargeRate.toLocaleString()}` : '-'}`)}
       ${dlRow("Currency", b.currency)}
       ${dlRow("Billable Start Date", fmtDate(b.billableStart))}
       ${dlRow("Billable End Date", fmtDate(b.billableEnd))}
