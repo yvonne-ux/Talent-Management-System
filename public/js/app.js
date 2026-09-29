@@ -64,7 +64,8 @@ const entities = [];
 function randInt(min,max){ return Math.floor(Math.random()*(max-min+1))+min; }
 function pick(arr){ return arr[randInt(0,arr.length-1)]; }
 function addDays(base, days){ const d = new Date(base); d.setDate(d.getDate()+days); return d; }
-function toISO(d){ return d.toISOString().slice(0,10); }
+// Blank for a missing date: imported talents often have no DOB/pass expiry, and a date input shows '' as empty.
+function toISO(d){ return d ? d.toISOString().slice(0,10) : ''; }
 
 const today = new Date();
 let nextId = 1;
@@ -1696,9 +1697,10 @@ document.getElementById('editForm').addEventListener('submit', async e=>{
     // is the authoritative merged state to apply locally.
     await api.talents.updatePayroll(c.id, { salary });
     await api.talents.updateBilling(c.id, { chargeRate });
-    await api.talents.updateContract(c.id, { contractStart, contractEnd });
-    const afterWorkPass = await api.talents.updateWorkPass(c.id, { passExpiry });
-    Object.assign(c, afterWorkPass);
+    let latest = await api.talents.updateContract(c.id, { contractStart, contractEnd });
+    // Talents imported without a pass type have no work pass record to update.
+    if(c.workPassType && passExpiry) latest = await api.talents.updateWorkPass(c.id, { passExpiry });
+    Object.assign(c, latest);
     computeDerived(c);
     closeEditPanelFn();
     renderStats();
@@ -1754,7 +1756,10 @@ function editDateRowNullable(label, id, value){
   </div>`;
 }
 function editSelectRow(label, id, options, selected){
-  const opts = options.map(o=>`<option value="${o}" ${o===selected?'selected':''}>${o}</option>`).join('');
+  // No value on file yet (common for imported talents): start on a blank choice instead of
+  // silently preselecting, and then saving, the first option.
+  const blank = (selected===null || selected===undefined || selected==='') ? `<option value="" selected>-</option>` : '';
+  const opts = blank + options.map(o=>`<option value="${o}" ${o===selected?'selected':''}>${o}</option>`).join('');
   return `<div class="flex items-center justify-between gap-3 py-0.5">
     <span class="text-[var(--muted)] shrink-0">${label}</span>
     <select id="${id}" class="select-basic !py-1 !px-2 max-w-[55%]">${opts}</select>
@@ -1942,15 +1947,22 @@ function renderTalentProfile(c){
     managedEditEl.classList.add('hidden');
     managedEditEl.classList.remove('flex');
   };
-  document.getElementById('profileManagedSaveBtn').onclick = ()=>{
+  document.getElementById('profileManagedSaveBtn').onclick = async ()=>{
+    const body = {};
     const newManagedBy = document.getElementById('profileManagedByInput').value.trim();
-    if(newManagedBy) c.caseOwner = newManagedBy;
+    if(newManagedBy) body.caseOwner = newManagedBy;
     const newEntity = document.getElementById('profileEntitySelect').value;
-    if(newEntity && newEntity !== "__add_new__") c.entity = newEntity;
-    renderTalentProfile(c);
-    renderStats();
-    renderTable();
-    showToast(`${c.name}'s profile updated`, checkIcon);
+    if(newEntity && newEntity !== "__add_new__") body.entity = newEntity;
+    try{
+      Object.assign(c, await api.talents.updatePersonal(c.id, body));
+      computeDerived(c);
+      renderTalentProfile(c);
+      renderStats();
+      renderTable();
+      showToast(`${c.name}'s profile updated`, checkIcon);
+    }catch(err){
+      showToast(`Failed to update ${c.name}: ${err.message}`, null);
+    }
   };
   document.getElementById('profileEntitySelect').onchange = e=>{
     if(e.target.value !== "__add_new__") return;
@@ -2213,10 +2225,10 @@ async function saveProfileTab(tabKey, c){
       updated = await api.talents.updatePersonal(c.id, {
         name: document.getElementById('p_name').value.trim() || c.name,
         dateOfBirth: document.getElementById('p_dateOfBirth').value || null,
-        sex: document.getElementById('p_sex').value,
-        nationality: document.getElementById('p_nationality').value,
+        sex: document.getElementById('p_sex').value || null,
+        nationality: document.getElementById('p_nationality').value || null,
         nric: document.getElementById('p_nric').value.trim(),
-        maritalStatus: document.getElementById('p_maritalStatus').value,
+        maritalStatus: document.getElementById('p_maritalStatus').value || null,
         dependants: Number(document.getElementById('p_dependants').value),
         address: document.getElementById('p_address').value.trim(),
         contactNumber: document.getElementById('p_contactNumber').value.trim(),
