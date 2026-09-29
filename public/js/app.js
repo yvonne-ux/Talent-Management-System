@@ -33,6 +33,21 @@ const clients = []; // populated from the API at bootstrap (see bootstrap() at t
 const projectTypes = [];
 const workPassTypes = ["EP","S Pass","Work Permit","Singapore Citizen","PR"];
 const workPassAdminFees = { "EP": 150, "S Pass": 100, "Work Permit": 60, "Singapore Citizen": 0, "PR": 0 };
+// Talents with no work pass on file (imported as NA, or set to Not Applicable) have workPassType null.
+function passTypeLabel(c){ return c.workPassType || "Not Applicable"; }
+// Filter options: the standard types, Not Applicable, plus any other type found in the data
+// (e.g. an imported "Employment Pass"), so every talent can be filtered.
+function passTypeFilterOptions(){
+  const extra = talents.map(passTypeLabel).filter(t=>!workPassTypes.includes(t) && t!=="Not Applicable");
+  return [...workPassTypes, "Not Applicable", ...[...new Set(extra)].sort()];
+}
+// Called once talents load and after a work pass type changes, so imported types show up in the filters.
+function refreshPassTypeFilters(){
+  const opts = passTypeFilterOptions();
+  msWorkPassTypeFilterMain.setOptions(opts);
+  msWorkpassType.setOptions(opts);
+  msRenewalWorkpassType.setOptions(opts.filter(t=>!["Singapore Citizen","PR","Not Applicable"].includes(t)));
+}
 function getWorkPassAdminFee(c){ return workPassAdminFees[c.workPassType] ?? 0; }
 const sowStatuses = ["Signed","Pending","Drafted"];
 const poStatuses = ["Received","Raised","Pending"];
@@ -529,7 +544,7 @@ function createMultiSelect(wrapId, options, placeholder, onChange){
 }
 const msClientFilter = createMultiSelect('clientFilter', [...new Set(clients)].sort(), "All clients", vals=>{ clientTerm=vals; page=1; renderTable(); });
 const msProjectFilter = createMultiSelect('projectFilter', [...new Set(projectTypes)].sort(), "All project types", vals=>{ projectTerm=vals; page=1; renderTable(); });
-const msWorkPassTypeFilterMain = createMultiSelect('workPassTypeFilterMain', [...new Set(workPassTypes)].sort(), "All pass types", vals=>{ workPassTypeTermMain=vals; page=1; renderTable(); });
+const msWorkPassTypeFilterMain = createMultiSelect('workPassTypeFilterMain', [...workPassTypes, "Not Applicable"], "All pass types", vals=>{ workPassTypeTermMain=vals; page=1; renderTable(); });
 const msWorkPassStatusFilterMain = createMultiSelect('workPassStatusFilterMain', ["Requires Renewal","Eligible for Renewal","Active","Pending Application","Inactive","N/A"], "All pass statuses", vals=>{ workPassStatusTermMain=vals; page=1; renderTable(); });
 const msContractStatusFilterMain = createMultiSelect('contractStatusFilterMain', ["Requires Renewal","Eligible for Renewal","Active","Pending Start","Notice Period","Inactive"], "All contract statuses", vals=>{ contractStatusTermMain=vals; page=1; renderTable(); });
 const msOwnerFilterMain = createMultiSelect('ownerFilterMain', [...new Set(caseOwners)].sort(), "All recruiters", vals=>{ ownerTermMain=vals; page=1; renderTable(); });
@@ -878,7 +893,7 @@ function getFiltered(){
     if(searchTerm && !c.name.toLowerCase().includes(searchTerm.toLowerCase())) return false;
     if(clientTerm.length && !clientTerm.includes(c.client)) return false;
     if(projectTerm.length && !projectTerm.includes(c.projectType)) return false;
-    if(workPassTypeTermMain.length && !workPassTypeTermMain.includes(c.workPassType)) return false;
+    if(workPassTypeTermMain.length && !workPassTypeTermMain.includes(passTypeLabel(c))) return false;
     if(workPassStatusTermMain.length && !workPassStatusTermMain.includes(passStatusDisplay(c).label)) return false;
     if(contractStatusTermMain.length && !contractStatusTermMain.includes(contractStatusDisplay(c).label)) return false;
     if(ownerTermMain.length && !ownerTermMain.includes(c.caseOwner)) return false;
@@ -935,7 +950,7 @@ function renderTable(){
             </div>
           </td>
           <td class="px-4 py-1 text-[var(--muted)] whitespace-nowrap">${c.client}</td>
-          <td class="px-4 py-1 whitespace-nowrap">${c.workPassType}</td>
+          <td class="px-4 py-1 whitespace-nowrap">${passTypeLabel(c)}</td>
           <td class="px-4 py-1 whitespace-nowrap ${!isCitizenOrPR && c.passDaysLeft<=30?'date-alert':''}">${passExpiryDisplay}</td>
           <td class="px-4 py-1 whitespace-nowrap"><span class="pill" style="${passBucket.style}">${passBucket.label}</span></td>
           <td class="px-4 py-1 whitespace-nowrap ${c.contractDaysLeft<=30?'date-alert':''}">${fmtDate(c.contractEnd)}</td>
@@ -1074,7 +1089,7 @@ const exportColumns = [
   {key:'client', label:'Client', get:c=>c.client},
   {key:'projectType', label:'Project Type', get:c=>c.projectType},
   {key:'jobTitle', label:'Job Title', get:c=>c.jobTitle},
-  {key:'workPassType', label:'Work Pass', get:c=>c.workPassType},
+  {key:'workPassType', label:'Work Pass', get:c=>passTypeLabel(c)},
   {key:'passStatus', label:'Work Pass Status', get:c=>c.passStatus},
   {key:'contractStart', label:'Start Date', get:c=>fmtDate(c.contractStart)},
   {key:'contractEnd', label:'End Date', get:c=>fmtDate(c.contractEnd)},
@@ -2147,7 +2162,7 @@ function renderTalentProfile(c){
     dlRow("Overtime", fmtMoney(payrollFigures.overtime)),
     dlRow("No-Pay Leave Deduction", `-${fmtMoney(payrollFigures.noPayLeaveDeduction)}`),
     dlRow("Other Statutory Costs", fmtMoney(payrollFigures.otherStatutoryCosts)),
-    dlRow("Work Pass Admin Fee", `${fmtMoney(payrollFigures.adminFee)}<div class="text-[10px] text-[var(--muted)] font-normal">${c.workPassType} · ${c.passStatus}</div>`),
+    dlRow("Work Pass Admin Fee", `${fmtMoney(payrollFigures.adminFee)}<div class="text-[10px] text-[var(--muted)] font-normal">${passTypeLabel(c)} · ${c.passStatus || "N/A"}</div>`),
     dlRow("Total Employer Cost (Est.)", `<span class="font-semibold">${fmtMoney(payrollFigures.totalCost)}</span>`),
     dlRow("Revenue Billed (Est. Monthly)", fmtMoney(payrollFigures.revenue)),
     dlRow("Gross Profit (Est.)", `<span class="font-semibold" style="color:${(payrollFigures.revenue-payrollFigures.totalCost)>=0?'var(--green-text)':'var(--red-text)'}">${fmtMoney(payrollFigures.revenue-payrollFigures.totalCost)}</span>`),
@@ -2307,6 +2322,7 @@ async function saveProfileTab(tabKey, c){
     Object.assign(c, updated);
     computeDerived(c);
     profileEditingTabs.delete(tabKey);
+    if(tabKey === 'workpass') refreshPassTypeFilters();
     renderTalentProfile(c);
     renderStats();
     renderTable();
@@ -3057,7 +3073,7 @@ function getWorkpassFiltered(){
       const matches = c.name.toLowerCase().includes(term) || idStr.includes(term) || workpassFinNo(c).toLowerCase().includes(term);
       if(!matches) return false;
     }
-    if(workpassTypeTerm.length && !workpassTypeTerm.includes(c.workPassType)) return false;
+    if(workpassTypeTerm.length && !workpassTypeTerm.includes(passTypeLabel(c))) return false;
     if(workpassStatusTerm.length && !workpassStatusTerm.includes(passStatusDisplay(c).label)) return false;
     if(workpassRenewalStatusTerm.length && !workpassRenewalStatusTerm.includes(renewalStatusDisplayLabel(c.renewalStatus))) return false;
     if(workpassUrgencyTerm && workpassUrgencyFor(c) !== workpassUrgencyTerm) return false;
@@ -3077,8 +3093,8 @@ function initCosmeticMonthFilter(selectId, onChange){
 
 function renderWorkpassStatCards(){
   initCosmeticMonthFilter('workpassStatsMonthFilter', ()=> renderWorkpassStatCards());
-  document.getElementById('workpassTypeStatCards').innerHTML = workPassTypes.map(type=>{
-    const count = talents.filter(c=>c.workPassType===type).length;
+  document.getElementById('workpassTypeStatCards').innerHTML = [...workPassTypes, "Not Applicable"].map(type=>{
+    const count = talents.filter(c=>passTypeLabel(c)===type).length;
     const active = workpassTypeTerm.includes(type);
     return `<div class="stat-card workpass-stat-card rounded-lg px-4 py-3 ${active?'workpass-stat-card-active':''}" data-type="${type}">
       <div class="text-xs text-[var(--muted)] mb-1">${workPassFullNames[type] || type}</div>
@@ -3225,7 +3241,7 @@ function renderWorkpassTable(){
           </td>
           <td class="px-4 py-1 text-[var(--muted)] whitespace-nowrap">${workpassFinNo(c)}</td>
           <td class="px-4 py-1 text-[var(--muted)] whitespace-nowrap">${c.client}</td>
-          <td class="px-4 py-1 whitespace-nowrap">${c.workPassType}</td>
+          <td class="px-4 py-1 whitespace-nowrap">${passTypeLabel(c)}</td>
           <td class="px-4 py-1 whitespace-nowrap">${isCitizenOrPR ? 'N/A' : fmtDate(c.passIssueDate)}</td>
           <td class="px-4 py-1 whitespace-nowrap ${!isCitizenOrPR && c.passDaysLeft<=30?'date-alert':''}">${isCitizenOrPR ? 'N/A' : fmtDate(c.passExpiry)}</td>
           <td class="px-4 py-1 whitespace-nowrap ${!isCitizenOrPR && c.passDaysLeft<=30?'date-alert':''}">${daysLabel}</td>
@@ -3274,7 +3290,7 @@ updateWorkpassSortArrows();
 
 document.getElementById('workpassSearchInput').addEventListener('input', e=>{ workpassSearchTerm=e.target.value; workpassPage=1; renderWorkpassTable(); });
 wireClearButton('workpassSearchInput', 'workpassSearchClear', ()=>{ workpassSearchTerm=""; workpassPage=1; renderWorkpassTable(); });
-const msWorkpassType = createMultiSelect('workpassTypeFilter', workPassTypes, "All pass types", vals=>{ workpassTypeTerm=vals; workpassPage=1; renderWorkPass(); });
+const msWorkpassType = createMultiSelect('workpassTypeFilter', [...workPassTypes, "Not Applicable"], "All pass types", vals=>{ workpassTypeTerm=vals; workpassPage=1; renderWorkPass(); });
 const msWorkpassStatus = createMultiSelect('workpassStatusFilter', ["Requires Renewal","Eligible for Renewal","Active","Pending Application","Inactive","N/A"], "All statuses", vals=>{ workpassStatusTerm=vals; workpassPage=1; renderWorkpassTable(); });
 const msWorkpassRenewalStatus = createMultiSelect('workpassRenewalStatusFilter', ["Yet to Start","In Progress","Completed"], "All renewal statuses", vals=>{ workpassRenewalStatusTerm=vals; workpassPage=1; renderWorkpassTable(); });
 document.getElementById('workpassClearFilters').addEventListener('click', e=>{
@@ -3291,7 +3307,7 @@ function downloadWorkpassList(format){
     { label: 'Name', value: c=>c.name },
     { label: 'NRIC/FIN', value: c=>workpassFinNo(c) },
     { label: 'Client', value: c=>c.client },
-    { label: 'Work Pass Type', value: c=>c.workPassType },
+    { label: 'Work Pass Type', value: c=>passTypeLabel(c) },
     { label: 'Issue Date', value: c=>['Singapore Citizen','PR'].includes(c.workPassType) ? '' : xlDate(c.passIssueDate) },
     { label: 'Expiry Date', value: c=>['Singapore Citizen','PR'].includes(c.workPassType) ? '' : xlDate(c.passExpiry) },
     { label: 'Days Left', value: c=>['Singapore Citizen','PR'].includes(c.workPassType) ? '' : c.passDaysLeft },
@@ -3314,12 +3330,13 @@ let contractsSortKey = "name";
 let contractsSortDir = 1;
 let contractsFiltersInit = false;
 let msContractsStatus = null;
+let msContractsClient = null;
 let contractsPage = 1;
 
 function initContractsFilters(){
   if(contractsFiltersInit) return;
   contractsFiltersInit = true;
-  const msContractsClient = createMultiSelect('contractsClientFilter', [...new Set(clients)].sort(), "All clients", vals=>{ contractsClientTerm=vals; contractsPage=1; renderContracts(); });
+  msContractsClient = createMultiSelect('contractsClientFilter', [...new Set(clients)].sort(), "All clients", vals=>{ contractsClientTerm=vals; contractsPage=1; renderContracts(); });
   msContractsStatus = createMultiSelect('contractsStatusFilter', ["Requires Renewal","Eligible for Renewal","Active","Pending Start","Notice Period","Inactive"], "All statuses", vals=>{ contractsStatusTerm=vals; contractsPage=1; renderContracts(); });
   const msContractsRenewalStatus = createMultiSelect('contractsRenewalStatusFilter', ["Yet to Start","In Progress","Completed"], "All renewal statuses", vals=>{ contractsRenewalStatusTerm=vals; contractsPage=1; renderContracts(); });
   document.getElementById('contractsSearchInput').addEventListener('input', e=>{
@@ -3891,7 +3908,7 @@ function renderFinance(){
       <td class="px-4 py-1 whitespace-nowrap">${fmtMoney(f.revenue)}</td>
       <td class="px-4 py-1 whitespace-nowrap">
         <div>${fmtMoney(f.adminFee)}</div>
-        <div class="text-[10px] text-[var(--muted)]">${c.workPassType} · ${c.passStatus}</div>
+        <div class="text-[10px] text-[var(--muted)]">${passTypeLabel(c)} · ${c.passStatus || "N/A"}</div>
       </td>
     </tr>`;
   }).join('');
@@ -5249,7 +5266,7 @@ let renewalWorkpassTypeTerm = [];
 let renewalWorkpassStatusTerm = [];
 let renewalWorkpassRenewalStatusTerm = [];
 
-createMultiSelect('renewalContractClientFilter', [...new Set(clients)].sort(), "All clients", vals=>{ renewalContractClientTerm = vals; renderRenewalContract(); });
+const msRenewalContractClient = createMultiSelect('renewalContractClientFilter', [...new Set(clients)].sort(), "All clients", vals=>{ renewalContractClientTerm = vals; renderRenewalContract(); });
 document.getElementById('renewalContractSearchInput').addEventListener('input', e=>{ renewalContractSearchTerm = e.target.value.trim().toLowerCase(); renderRenewalContract(); });
 document.getElementById('renewalContractSearchClear').addEventListener('click', ()=>{
   document.getElementById('renewalContractSearchInput').value = "";
@@ -5259,7 +5276,7 @@ document.getElementById('renewalContractSearchClear').addEventListener('click', 
 createMultiSelect('renewalContractStatusFilter', ["Requires Renewal","Eligible for Renewal","Active","Pending Start","Notice Period","Inactive"], "All contract statuses", vals=>{ renewalContractStatusTerm = vals; renderRenewalContract(); });
 createMultiSelect('renewalContractRenewalStatusFilter', ["Yet to Start","In Progress","Completed"], "All renewal statuses", vals=>{ renewalContractRenewalStatusTerm = vals; renderRenewalContract(); });
 
-createMultiSelect('renewalWorkpassTypeFilter', [...new Set(workPassTypes)].filter(t=>!["Singapore Citizen","PR"].includes(t)).sort(), "All work passes", vals=>{ renewalWorkpassTypeTerm = vals; renderRenewalWorkpass(); });
+const msRenewalWorkpassType = createMultiSelect('renewalWorkpassTypeFilter', [...new Set(workPassTypes)].filter(t=>!["Singapore Citizen","PR"].includes(t)).sort(), "All work passes", vals=>{ renewalWorkpassTypeTerm = vals; renderRenewalWorkpass(); });
 document.getElementById('renewalWorkpassSearchInput').addEventListener('input', e=>{ renewalWorkpassSearchTerm = e.target.value.trim().toLowerCase(); renderRenewalWorkpass(); });
 document.getElementById('renewalWorkpassSearchClear').addEventListener('click', ()=>{
   document.getElementById('renewalWorkpassSearchInput').value = "";
@@ -5697,7 +5714,7 @@ function renderRenewalWorkpass(){
       <td class="px-4 py-1 font-medium whitespace-nowrap"><span class="renewal-talent-link cursor-pointer hover:underline hover:text-[var(--blue-dark)]" data-id="${c.id}" data-returnview="workpass">${c.name}</span></td>
       <td class="px-4 py-1 text-[var(--muted)] whitespace-nowrap">${c.nric}</td>
       <td class="px-4 py-1 text-[var(--muted)] whitespace-nowrap"><span class="renewal-client-link cursor-pointer hover:underline hover:text-[var(--blue-dark)]" data-client="${c.client}">${c.client}</span></td>
-      <td class="px-4 py-1 whitespace-nowrap">${c.workPassType}</td>
+      <td class="px-4 py-1 whitespace-nowrap">${passTypeLabel(c)}</td>
       <td class="px-4 py-1 whitespace-nowrap">${fmtDate(c.passIssueDate)}</td>
       <td class="px-4 py-1 whitespace-nowrap ${c.passDaysLeft<=30?'date-alert':''}">${fmtDate(c.passExpiry)}</td>
       <td class="px-4 py-1 whitespace-nowrap ${c.passDaysLeft<=30?'date-alert':''}">${c.passDaysLeft<0?`${Math.abs(c.passDaysLeft)}d overdue`:`${c.passDaysLeft}d`}</td>
@@ -6024,6 +6041,8 @@ clientEditForm.addEventListener('submit', async e=>{
     if(msBillingClient) msBillingClient.setOptions([...new Set(clients)].sort());
     if(msOperationsClient) msOperationsClient.setOptions([...new Set(clients)].sort());
     if(msOffboardingClient) msOffboardingClient.setOptions([...new Set(clients)].sort());
+    if(msContractsClient) msContractsClient.setOptions([...new Set(clients)].sort());
+    msRenewalContractClient.setOptions([...new Set(clients)].sort());
     if(msAnalyticsClient) msAnalyticsClient.setOptions([...new Set(clients)].sort());
     fillOptions(document.getElementById('f_client'), [...new Set(clients)].sort(), null);
     addAddNewOption(document.getElementById("f_client"), "+ Add New Client…");
@@ -6973,6 +6992,8 @@ async function bootstrap(){
     msEntityFilterMain.setOptions([...new Set(entities)].sort());
     msClientFilter.setOptions([...new Set(clients)].sort());
     msProjectFilter.setOptions([...new Set(projectTypes)].sort());
+    msRenewalContractClient.setOptions([...new Set(clients)].sort());
+    refreshPassTypeFilters();
     fillOptions(document.getElementById('f_caseOwner'), [...new Set(caseOwners)].sort(), null);
     addAddNewOption(document.getElementById('f_caseOwner'), "+ Add New Recruiter…");
     fillOptions(document.getElementById('f_entity'), [...new Set(entities)].sort(), null);
