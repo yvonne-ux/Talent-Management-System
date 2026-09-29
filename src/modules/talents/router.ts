@@ -418,7 +418,16 @@ talentsRouter.patch(
   asyncHandler(async (req, res) => {
     const id = Number(req.params.id);
     const b = req.body as Record<string, unknown>;
-    const current = await prisma.workPass.findUniqueOrThrow({ where: { talentId: id } });
+    // "Not Applicable" means no work pass on file, the same as the import: drop the record.
+    if (typeof b.workPassType === "string" && NO_WORK_PASS_MARKERS.has(b.workPassType.trim().toLowerCase())) {
+      await prisma.workPass.deleteMany({ where: { talentId: id } });
+      return void res.json(await reserialize(id, req));
+    }
+
+    // Talents imported without a pass type have no work pass record yet; create one on first edit.
+    const current =
+      (await prisma.workPass.findUnique({ where: { talentId: id } })) ??
+      (await prisma.workPass.create({ data: { talentId: id } }));
 
     const data: Record<string, unknown> = {};
     for (const key of ["workPassType", "passStatus", "medicalCheckupStatus", "medicalInsuranceStatus", "wicaCoverageStatus", "renewalStatus", "educationVerificationStatus", "passLifecycleStatus", "passRenewalRemarks"]) {
