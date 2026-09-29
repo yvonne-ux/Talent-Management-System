@@ -1853,8 +1853,15 @@
           <input required id="f_salary" type="number" min="0" step="50" class="filter-input" placeholder="6500" />
         </div>
         <div>
-          <label class="field-label">Charge Rate (Daily, S$)</label>
-          <input required id="f_chargeRate" type="number" min="0" step="10" class="filter-input" placeholder="850" />
+          <label class="field-label">Billing Type</label>
+          <select id="f_billingType" class="filter-input">
+            <option value="Monthly" selected>Monthly rate</option>
+            <option value="Daily">Daily rate (× working days)</option>
+          </select>
+        </div>
+        <div>
+          <label class="field-label" id="f_chargeRateLabel">Charge Rate (Monthly, S$)</label>
+          <input required id="f_chargeRate" type="number" min="0" step="10" class="filter-input" placeholder="8500" />
         </div>
       </div>
     </div>
@@ -2023,7 +2030,14 @@
       <input id="e_salary" type="number" min="0" step="50" class="filter-input" />
     </div>
     <div>
-      <label class="field-label">Charge Rate (Daily, S$)</label>
+      <label class="field-label">Billing Type</label>
+      <select id="e_billingType" class="filter-input">
+        <option value="Monthly">Monthly rate</option>
+        <option value="Daily">Daily rate (× working days)</option>
+      </select>
+    </div>
+    <div>
+      <label class="field-label" id="e_chargeRateLabel">Charge Rate (Monthly, S$)</label>
       <input id="e_chargeRate" type="number" min="0" step="10" class="filter-input" />
     </div>
     <div class="border-t border-[var(--border)] pt-4">
