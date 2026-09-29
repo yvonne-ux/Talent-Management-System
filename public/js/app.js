@@ -4623,7 +4623,6 @@ function initClientsFilters(){
   updateClientsSortArrows();
 
   fillOptions(document.getElementById('cl_industry'), industries, null);
-  fillOptions(document.getElementById('cl_accountManager'), accountManagers, null);
 
   document.getElementById('clientsClearFilters').addEventListener('click', e=>{
     e.preventDefault();
@@ -5894,7 +5893,13 @@ function openClientViewModal(client){
   clientModalOverlay.classList.add('open');
   clientModal.classList.add('open');
 }
+// Suggest account manager names already used on clients; any new name can still be typed.
+function refreshAccountManagerList(){
+  const names = [...new Set(Object.values(clientProfiles).map(p=>(p.accountManager||'').trim()).filter(Boolean))].sort();
+  fillOptions(document.getElementById('accountManagerList'), names, null);
+}
 function openAddClientModal(){
+  refreshAccountManagerList();
   editingClientName = null;
   document.getElementById('clientModalTitle').textContent = "Add a Client";
   document.getElementById('clientModalSub').textContent = "";
@@ -5926,7 +5931,8 @@ document.getElementById('clientEditBtn').addEventListener('click', ()=>{
   document.getElementById('cl_industry').value = p.industry;
   document.getElementById('cl_status').value = p.status;
   document.getElementById('cl_contactPerson').value = p.contactPerson;
-  document.getElementById('cl_accountManager').value = p.accountManager;
+  document.getElementById('cl_accountManager').value = p.accountManager || '';
+  refreshAccountManagerList();
   document.getElementById('cl_contactEmail').value = p.contactEmail;
   document.getElementById('cl_contactNumber').value = p.contactNumber;
   clientViewContent.classList.add('hidden');
@@ -5941,7 +5947,7 @@ clientEditForm.addEventListener('submit', async e=>{
     industry: document.getElementById('cl_industry').value,
     status: document.getElementById('cl_status').value,
     contactPerson: document.getElementById('cl_contactPerson').value.trim(),
-    accountManager: document.getElementById('cl_accountManager').value,
+    accountManager: document.getElementById('cl_accountManager').value.trim() || null,
     contactEmail: document.getElementById('cl_contactEmail').value.trim(),
     contactNumber: document.getElementById('cl_contactNumber').value.trim(),
   };
