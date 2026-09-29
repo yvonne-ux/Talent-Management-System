@@ -1792,6 +1792,8 @@ function editSelectRow(label, id, options, selected){
   // No value on file yet (common for imported talents): start on a blank choice instead of
   // silently preselecting, and then saving, the first option.
   const blank = (selected===null || selected===undefined || selected==='') ? `<option value="" selected>-</option>` : '';
+  // Keep a value that isn't in the list (e.g. an imported "Employment Pass") instead of swapping it for the first option.
+  if(!blank && !options.includes(selected)) options = [selected, ...options];
   const opts = blank + options.map(o=>`<option value="${o}" ${o===selected?'selected':''}>${o}</option>`).join('');
   return `<div class="flex items-center justify-between gap-3 py-0.5">
     <span class="text-[var(--muted)] shrink-0">${label}</span>
@@ -2053,14 +2055,16 @@ function renderTalentProfile(c){
   }
 
   /* ----- Work Pass tab ----- */
-  document.getElementById('profileWorkpassEditBar').innerHTML = isCitizenOrPR ? '' : editBarHtml('workpass');
+  // Editable for everyone, including talents imported with no pass type or as Citizen/PR,
+  // so a missing or wrong pass type can be corrected.
+  document.getElementById('profileWorkpassEditBar').innerHTML = editBarHtml('workpass');
   const workPassBucket = passStatusDisplay(c);
-  if(!isCitizenOrPR && profileEditingTabs.has('workpass')){
+  if(profileEditingTabs.has('workpass')){
     document.getElementById('profileEmployment').innerHTML = [
       editTextRow("NRIC / FIN No.", "p_nric_wp", c.nric),
-      editSelectRow("Work Pass", "p_workPassType", workPassTypes, c.workPassType),
+      editSelectRow("Work Pass", "p_workPassType", [...workPassTypes, "Not Applicable"], c.workPassType || "Not Applicable"),
       editDateRowNullable("Date of Issue", "p_passIssueDate", c.passIssueDate),
-      editDateRow("Date of Expiry", "p_passExpiry", c.passExpiry),
+      editDateRowNullable("Date of Expiry", "p_passExpiry", c.passExpiry),
       editSelectRow("Pass Status", "p_passStatus", passStatusOptions, c.passStatus),
       editSelectRow("Renewal Status", "p_renewalStatus", ["Not Started","In Progress","Completed"], c.renewalStatus),
       editSelectRow("Pass Status Override", "p_passLifecycleStatus", ["Automatic (based on expiry date)","Pending Application","Inactive"], c.passLifecycleStatus || "Automatic (based on expiry date)"),
@@ -2068,10 +2072,10 @@ function renderTalentProfile(c){
   } else {
     document.getElementById('profileEmployment').innerHTML = [
       dlRow("NRIC / FIN No.", c.nric),
-      dlRow("Work Pass", c.workPassType),
+      dlRow("Work Pass", c.workPassType || "Not Applicable"),
       dlRow("Date of Issue", c.passIssueDate ? fmtDate(c.passIssueDate) : "N/A"),
       dlRow("Date of Expiry", isCitizenOrPR ? "N/A" : `<span class="${passAlert?'date-alert':''}">${fmtDate(c.passExpiry)}</span>`),
-      dlRow("Days Left to Expiry", isCitizenOrPR ? "N/A" : `<span class="${passAlert?'date-alert':''}">${c.passDaysLeft<0?`${Math.abs(c.passDaysLeft)}d overdue`:`${c.passDaysLeft}d`}</span>`),
+      dlRow("Days Left to Expiry", isCitizenOrPR ? "N/A" : c.passDaysLeft===null ? "-" : `<span class="${passAlert?'date-alert':''}">${c.passDaysLeft<0?`${Math.abs(c.passDaysLeft)}d overdue`:`${c.passDaysLeft}d`}</span>`),
       dlRow("Pass Status", `<span class="pill" style="${workPassBucket.style}">${workPassBucket.label}</span>`),
       dlRow("Renewal Status", (workPassBucket.label === "Requires Renewal" || workPassBucket.label === "Eligible for Renewal") ? `<span class="pill" style="${renewalStatusPillStyleContract(c.renewalStatus)}">${renewalStatusDisplayLabel(c.renewalStatus)}</span>` : `<span class="text-[var(--muted)]">—</span>`),
     ].join('');
@@ -2275,11 +2279,11 @@ async function saveProfileTab(tabKey, c){
       const issueVal = document.getElementById('p_passIssueDate').value;
       const passOverrideVal = document.getElementById('p_passLifecycleStatus').value;
       updated = await api.talents.updateWorkPass(c.id, {
-        workPassType: document.getElementById('p_workPassType').value,
+        workPassType: document.getElementById('p_workPassType').value || undefined, // blank = leave unchanged
         passIssueDate: issueVal || null,
-        passExpiry: document.getElementById('p_passExpiry').value,
-        passStatus: document.getElementById('p_passStatus').value,
-        renewalStatus: document.getElementById('p_renewalStatus').value,
+        passExpiry: document.getElementById('p_passExpiry').value || null,
+        passStatus: document.getElementById('p_passStatus').value || undefined, // blank = leave unchanged
+        renewalStatus: document.getElementById('p_renewalStatus').value || undefined, // blank = leave unchanged
         passLifecycleStatus: passOverrideVal === "Automatic (based on expiry date)" ? "" : passOverrideVal,
       });
       c.nric = document.getElementById('p_nric_wp').value.trim();
