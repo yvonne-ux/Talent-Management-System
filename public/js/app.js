@@ -2277,8 +2277,14 @@ function renderTalentProfile(c){
   if(profileEditingTabs.has('billing')){
     document.getElementById('profileBilling').innerHTML = [
       editSelectRow("Billing Type", "p_billingType", billingTypes, c.billingType),
+      editNumberRow(c.billingType === "Daily" ? "Charge Rate (Daily, S$)" : "Charge Rate (Monthly, S$)", "p_chargeRate", c.chargeRate),
       editSelectRow("Invoice Status", "p_invoiceStatus", invoiceStatuses, c.invoiceStatus),
     ].join('');
+    // Keep the rate label in step with the billing type picked above it.
+    document.getElementById('p_billingType').addEventListener('change', e=>{
+      document.getElementById('p_chargeRate').previousElementSibling.textContent =
+        e.target.value === "Daily" ? "Charge Rate (Daily, S$)" : "Charge Rate (Monthly, S$)";
+    });
   } else {
     document.getElementById('profileBilling').innerHTML = [
       dlRow("Billing Type", c.billingType),
@@ -2416,6 +2422,7 @@ async function saveProfileTab(tabKey, c){
     } else if(tabKey === 'billing'){
       updated = await api.talents.updateBilling(c.id, {
         billingType: document.getElementById('p_billingType').value,
+        chargeRate: Number(document.getElementById('p_chargeRate').value),
         invoiceStatus: document.getElementById('p_invoiceStatus').value,
       });
     }
