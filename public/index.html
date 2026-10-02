@@ -7,18 +7,18 @@
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bg-page:#F4F5F7;
+    --bg-page:#F6F8FB;
     --bg-panel:#FFFFFF;
-    --border:#E1E4E8;
+    --border:#E5E9EF;
     --border-strong:#D3D7DC;
     --text:#1B2733;
     --muted:#6B7480;
-    --blue:#3E7CC2;
-    --blue-dark:#2C64A8;
-    --blue-tint:#EAF3FC;
+    --blue:#2F6FB5;
+    --blue-dark:#21599A;
+    --blue-tint:#EAF2FB;
     --sidebar-active:#E8F1FC;
     --green-bg:#E4F5E9; --green-text:#1E7E34; --green-dot:#2E9E4A;
     --amber-bg:#FFF2DE; --amber-text:#93600A; --amber-dot:#D98C0F;
@@ -26,11 +26,38 @@
     --turquoise-bg:#DDF3F1; --turquoise-text:#0D6E68; --turquoise-dot:#17A398;
     --red-bg:#FBE7E7; --red-text:#B3261E; --red-dot:#E24C41;
   }
-  html,body{ background:var(--bg-page); color:var(--text); font-family:'Inter',sans-serif; }
+  html,body{ background:var(--bg-page); color:var(--text); font-family:'Plus Jakarta Sans','Inter',system-ui,sans-serif; }
 
   .sidebar-link{ color:#4B5561; cursor:pointer; border-radius:8px; margin:1px 10px; }
   .sidebar-link:hover{ background:#F2F4F6; color:var(--text); }
-  .sidebar-link.active{ background:var(--blue); color:#fff; font-weight:600; border-left:none; }
+  .sidebar-link.active{ background:var(--blue-tint); color:var(--blue-dark); font-weight:700; border-left:none; }
+  .nav-badge{ margin-left:auto; font-size:11px; font-weight:700; line-height:18px; min-width:20px; text-align:center; padding:0 6px; border-radius:999px; background:var(--red-bg); color:var(--red-text); }
+  .nav-badge:empty{ display:none; }
+  .nav-section{ font-size:10.5px; letter-spacing:.09em; text-transform:uppercase; color:#8A95A3; font-weight:700; padding:14px 24px 6px; }
+
+  /* Segmented switch shared by Talents and Clients (one list, several column sets) */
+  .lens{ display:inline-flex; flex-wrap:wrap; gap:2px; background:#EEF1F4; border-radius:10px; padding:3px; }
+  .lens button{ padding:6px 12px; border-radius:8px; font-size:13px; font-weight:600; color:#5D6874; }
+  .lens button:hover{ color:var(--text); }
+  .lens button.active{ background:#fff; color:var(--blue-dark); box-shadow:0 1px 2px rgba(20,30,40,.12); }
+
+  /* Home */
+  .todo-group{ font-size:11px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); padding:12px 16px 6px; display:flex; gap:8px; align-items:center; }
+  .todo-group .cnt{ font-size:10.5px; background:#EEF1F4; color:var(--text); border-radius:999px; padding:0 7px; }
+  .todo-group.overdue{ color:var(--red-text); }
+  .todo-group.overdue .cnt{ background:var(--red-bg); color:var(--red-text); }
+  .todo-row{ display:grid; grid-template-columns:92px minmax(0,1fr) auto 76px; gap:12px; align-items:center; padding:8px 16px; border-top:1px solid #F0F2F5; }
+  .todo-kind{ font-size:10px; font-weight:800; letter-spacing:.05em; text-transform:uppercase; border-radius:5px; padding:3px 6px; text-align:center; white-space:nowrap; }
+  .todo-kind.k-pass{ background:#E6EFFA; color:#21599A; } .todo-kind.k-contract{ background:#F1EAFB; color:#5B2E91; }
+  .todo-kind.k-invoice{ background:var(--amber-bg); color:var(--amber-text); } .todo-kind.k-sow{ background:var(--turquoise-bg); color:var(--turquoise-text); }
+  .todo-kind.k-exit{ background:#F1E4D8; color:#7A4A1E; }
+  .chart-legend{ display:flex; flex-wrap:wrap; gap:14px; font-size:12px; color:#3D4957; }
+  .chart-legend i{ display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:6px; vertical-align:-1px; }
+  .home-tile .v{ font-size:26px; font-weight:800; line-height:1.15; font-variant-numeric:tabular-nums; }
+  .num{ font-variant-numeric:tabular-nums; }
+  .facts-strip{ display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); border-top:1px solid var(--border); }
+  .facts-strip > div{ padding:14px 20px; border-right:1px solid var(--border); }
+  .facts-strip > div:last-child{ border-right:0; }
 
   .sidebar-group-toggle{ cursor:pointer; background:none; border:none; color:#4B5561; border-radius:8px; margin:1px 10px; width:calc(100% - 20px); }
   .sidebar-group-toggle:hover{ background:#F2F4F6; }
@@ -286,101 +313,97 @@
 <div class="flex">
   <!-- Sidebar -->
   <aside id="sidebar" class="w-56 bg-white border-r border-[var(--border)] shrink-0 flex flex-col py-3 sticky top-20 self-start" style="height:calc(100vh - 80px)">
-    <nav class="flex-1 overflow-y-auto overflow-x-hidden">
+    <nav class="flex-1 overflow-y-auto overflow-x-hidden flex flex-col">
       <a class="sidebar-link flex items-center gap-3 px-4 py-2.5 text-sm" data-view="home">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
         Home
       </a>
-
       <a class="sidebar-link flex items-center gap-3 px-4 py-2.5 text-sm" data-view="renewals">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
-        Renewal Centre
+        Renewals <span class="nav-badge" id="navBadgeRenewals" title="Work passes and contracts due within 30 days or overdue"></span>
       </a>
 
-      <button type="button" class="sidebar-group-toggle w-full flex items-center justify-between px-4 py-2.5 text-sm font-semibold" data-group="group-talent">
-        <span class="flex items-center gap-3">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
-          Talent
-        </span>
-        <svg class="group-chevron w-3.5 h-3.5 transition-transform duration-150" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
-      </button>
-      <div class="sidebar-group" id="group-talent">
-        <a class="sidebar-link sidebar-sublink active flex items-center gap-3 py-2 text-sm" data-view="talents">Talents</a>
-        <a class="sidebar-link sidebar-sublink flex items-center gap-3 py-2 text-sm" data-view="workpass">Work Pass</a>
-        <a class="sidebar-link sidebar-sublink flex items-center gap-3 py-2 text-sm" data-view="contracts">Contract</a>
-        <a class="sidebar-link sidebar-sublink flex items-center gap-3 py-2 text-sm" data-view="insurance">Insurance</a>
-        <a class="sidebar-link sidebar-sublink flex items-center gap-3 py-2 text-sm" data-view="finance">Payroll and Cost</a>
-        <a class="sidebar-link sidebar-sublink flex items-center gap-3 py-2 text-sm" data-view="billing">Billing</a>
-        <a class="sidebar-link sidebar-sublink flex items-center gap-3 py-2 text-sm" data-view="operations">Timesheet and Leave</a>
-        <a class="sidebar-link sidebar-sublink flex items-center gap-3 py-2 text-sm" data-view="offboarding">Offboarding</a>
-      </div>
+      <div class="nav-section">People</div>
+      <a class="sidebar-link active flex items-center gap-3 px-4 py-2.5 text-sm" data-view="talents">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+        Talents
+      </a>
+      <a class="sidebar-link flex items-center gap-3 px-4 py-2.5 text-sm" data-view="operations">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        Timesheets &amp; Leave
+      </a>
 
-      <button type="button" class="sidebar-group-toggle w-full flex items-center justify-between px-4 py-2.5 text-sm font-semibold" data-group="group-client">
-        <span class="flex items-center gap-3">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
-          Client
-        </span>
-        <svg class="group-chevron w-3.5 h-3.5 transition-transform duration-150" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
-      </button>
-      <div class="sidebar-group" id="group-client">
-        <a class="sidebar-link sidebar-sublink flex items-center gap-3 py-2 text-sm" data-view="clients">Clients</a>
-        <a class="sidebar-link sidebar-sublink flex items-center gap-3 py-2 text-sm" data-view="sowpo">SOW and PO Tracking</a>
-        <a class="sidebar-link sidebar-sublink flex items-center gap-3 py-2 text-sm" data-view="analytics">Client Analysis</a>
-      </div>
+      <div class="nav-section">Money &amp; Clients</div>
+      <a class="sidebar-link flex items-center gap-3 px-4 py-2.5 text-sm" data-view="billing">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+        Billing <span class="nav-badge" id="navBadgeBilling" title="Overdue invoices"></span>
+      </a>
+      <a class="sidebar-link flex items-center gap-3 px-4 py-2.5 text-sm" data-view="clients">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+        Clients
+      </a>
 
+      <div class="mt-auto pt-3">
       <a id="adminSettingsNavLink" class="sidebar-link hidden flex items-center gap-3 px-4 py-2.5 text-sm" data-view="admin">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009.6 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9.6a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
         Admin Settings
       </a>
+      </div>
     </nav>
   </aside>
 
   <!-- Main content -->
   <main class="flex-1 min-w-0 p-5">
 
-    <!-- ================= HOME ================= -->
-    <div id="view-home" class="view-panel hidden">
-    <div class="py-6 md:py-8">
-      <h1 class="text-4xl md:text-6xl font-bold text-[var(--text)] leading-tight"><span id="homeGreeting"></span><span id="homeGreetingCursor" class="inline-block w-[5px] h-[0.85em] bg-[var(--text)] align-middle ml-1 animate-pulse"></span></h1>
+    <!-- Shared header for pages that are column sets of one list (Talents) or tabs of Clients -->
+    <div id="lensHeader" class="hidden mb-4 flex items-end justify-between flex-wrap gap-3">
+      <div>
+        <h1 id="lensTitle" class="text-2xl font-bold">Talents</h1>
+        <p id="lensSub" class="text-sm text-[var(--muted)] mt-0.5"></p>
+      </div>
+      <div id="lensTabs" class="lens" role="tablist"></div>
     </div>
 
-      <div class="stat-card rounded-lg p-4 mb-5">
-        <div class="flex items-center justify-between mb-3 flex-wrap gap-3">
-          <h2 class="text-sm font-semibold">Overview</h2>
-          <div>
-            <label class="block text-xs font-medium text-[var(--muted)] mb-1">Viewing data for</label>
-            <select id="homeMonthFilter" class="select-basic text-sm font-semibold px-3 py-1.5"></select>
+    <!-- ================= HOME ================= -->
+    <div id="view-home" class="view-panel hidden">
+      <div class="flex items-end justify-between flex-wrap gap-3 mb-4">
+        <div>
+          <h1 class="text-2xl font-extrabold tracking-tight" id="homeGreeting"></h1>
+          <p class="text-sm text-[var(--muted)]" id="homeSubline"></p>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4" id="homeTiles"></div>
+
+      <div class="grid lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] gap-3 mb-4">
+        <div class="stat-card rounded-xl overflow-hidden self-start">
+          <div class="flex items-center justify-between px-4 pt-4 pb-1">
+            <h2 class="text-sm font-bold">To do</h2>
+            <button type="button" class="text-xs link" onclick="switchView('renewals')">All renewals →</button>
+          </div>
+          <div id="homeTodo"></div>
+        </div>
+        <div class="flex flex-col gap-3 min-w-0">
+          <div class="stat-card rounded-xl p-4">
+            <div class="flex items-baseline justify-between mb-2"><h2 class="text-sm font-bold">Expiring per week</h2><span class="text-xs text-[var(--muted)]">work passes and contracts, next 7 weeks</span></div>
+            <div class="chart-legend mb-1"><span><i style="background:#2a78d6"></i>Work passes</span><span><i style="background:#eb6834"></i>Contracts</span></div>
+            <div id="homeWeeksChart"></div>
+          </div>
+          <div class="stat-card rounded-xl p-4">
+            <div class="flex items-baseline justify-between mb-2"><h2 class="text-sm font-bold">Active talents by client</h2><span class="text-xs text-[var(--muted)]">today</span></div>
+            <div id="homeClientDonut"></div>
           </div>
         </div>
-        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-3" id="homeKpiRow1"></div>
-        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3" id="homeKpiRow2"></div>
       </div>
 
-      <div class="grid md:grid-cols-2 gap-3 mb-5">
-        <div class="stat-card rounded-lg p-5">
-          <div class="text-sm font-semibold mb-3">Gross Profit Trend (SGD)</div>
-          <div id="homeRevenueChart" class="relative"></div>
+      <div id="homeMoneyRow" class="grid lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] gap-3">
+        <div class="stat-card rounded-xl p-4">
+          <div class="flex items-baseline justify-between mb-3"><h2 class="text-sm font-bold">Revenue, cost and gross profit</h2><button type="button" class="text-xs link" onclick="openGpBreakdownModal()">Breakdown by client →</button></div>
+          <div id="homeMoneyChart"></div>
         </div>
-        <div class="stat-card rounded-lg p-5">
-          <div class="text-sm font-semibold mb-3">GP by Client (This Month)</div>
-          <div id="homeGpDonut"></div>
-        </div>
-      </div>
-
-      <div class="stat-card rounded-lg overflow-hidden">
-        <h2 class="text-sm font-semibold px-4 pt-4 pb-2">Talents with expiries approaching in the next 30 days</h2>
-        <div class="overflow-x-auto">
-          <table class="w-full text-xs">
-            <thead>
-              <tr class="text-left border-y border-[var(--border)] bg-[#FAFBFC] text-[11px] uppercase tracking-wide text-[var(--muted)]">
-                <th class="homeExpiry-sortable px-4 py-1.5 font-semibold" data-key="name"><span class="th-label">Talent</span><span class="homeExpiry-sort-caret" data-arrow="name">▲</span></th>
-                <th class="homeExpiry-sortable px-4 py-1.5 font-semibold" data-key="client"><span class="th-label">Client</span><span class="homeExpiry-sort-caret" data-arrow="client">▲</span></th>
-                <th class="homeExpiry-sortable px-4 py-1.5 font-semibold" data-key="passExpiry"><span class="th-label">Work Pass Expiry</span><span class="homeExpiry-sort-caret" data-arrow="passExpiry">▲</span></th>
-                <th class="homeExpiry-sortable px-4 py-1.5 font-semibold" data-key="contractEnd"><span class="th-label">Contract End Date</span><span class="homeExpiry-sort-caret" data-arrow="contractEnd">▲</span></th>
-              </tr>
-            </thead>
-            <tbody id="homeExpiryList"></tbody>
-          </table>
+        <div class="stat-card rounded-xl p-4">
+          <div class="flex items-baseline justify-between mb-3"><h2 class="text-sm font-bold">Margin by client</h2><span class="text-xs text-[var(--muted)]">this month</span></div>
+          <div id="homeMarginChart"></div>
         </div>
       </div>
     </div>
@@ -839,6 +862,7 @@
             <button id="profileRemoveBtn" class="rounded-md px-4 py-2 text-sm font-medium border" style="border-color:var(--red-dot); color:var(--red-text); background:#fff;">Remove Talent</button>
           </div>
         </div>
+        <div id="profileFacts" class="facts-strip -mx-6 -mb-6 mt-5"></div>
       </div>
 
       <!-- Tab bar -->
