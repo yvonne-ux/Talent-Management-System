@@ -718,6 +718,68 @@ const checkIcon = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" s
 const sidebarLinks = document.querySelectorAll('.sidebar-link[data-view]');
 let canViewFinancials = true; // recomputed at bootstrap from role + admin settings
 const FINANCIAL_VIEWS = new Set(['finance','billing','analytics']);
+/* Pages that list the same people (or the same clients) are shown as column sets of one page,
+   switched with the segmented control in the shared header, instead of separate menu items. */
+const LENS_GROUPS = {
+  talents: { title: "Talents", nav: "talents", lenses: [
+    { view:'talents', label:'Overview' },
+    { view:'workpass', label:'Work pass' },
+    { view:'contracts', label:'Contract' },
+    { view:'insurance', label:'Insurance' },
+    { view:'finance', label:'Payroll & cost' },
+    { view:'offboarding', label:'Offboarding' },
+  ]},
+  clients: { title: "Clients", nav: "clients", lenses: [
+    { view:'clients', label:'Accounts' },
+    { view:'sowpo', label:'SOW & PO' },
+    { view:'analytics', label:'Analysis' },
+  ]},
+};
+const LENS_SUBTITLES = {
+  talents: "Everyone on the books · click a name to open their profile",
+  workpass: "Work pass type, expiry and renewal for every talent",
+  contracts: "Contract dates, status and renewal for every talent",
+  insurance: "Medical insurance policies and renewals for every talent",
+  finance: "Payroll cost and gross profit for every talent",
+  offboarding: "Talents leaving, with their exit checklist",
+  clients: "All client accounts · click a client to view or edit details",
+  sowpo: "Statement of Work and Purchase Order status by client and project",
+  analytics: "Project performance by client, with a 3-month trend",
+};
+function lensGroupFor(view){
+  return Object.keys(LENS_GROUPS).find(k=>LENS_GROUPS[k].lenses.some(l=>l.view===view)) || null;
+}
+function renderLensHeader(view){
+  const header = document.getElementById('lensHeader');
+  const groupKey = lensGroupFor(view);
+  header.classList.toggle('hidden', !groupKey);
+  if(!groupKey) return;
+  const group = LENS_GROUPS[groupKey];
+  document.getElementById('lensTitle').textContent = group.title;
+  document.getElementById('lensSub').textContent = LENS_SUBTITLES[view] || '';
+  const tabs = group.lenses.filter(l=>canViewFinancials || !FINANCIAL_VIEWS.has(l.view));
+  const bar = document.getElementById('lensTabs');
+  bar.innerHTML = tabs.map(l=>`<button type="button" role="tab" aria-selected="${l.view===view}" class="${l.view===view?'active':''}" data-lens="${l.view}">${l.label}</button>`).join('');
+  bar.querySelectorAll('button').forEach(b=>b.addEventListener('click', ()=>switchView(b.dataset.lens)));
+}
+/* The shared header replaces each lensed page's own title and description. */
+function hideLensedPageTitles(){
+  Object.values(LENS_GROUPS).forEach(g=>g.lenses.forEach(l=>{
+    const panel = document.getElementById('view-'+l.view);
+    const h1 = panel && panel.querySelector('h1');
+    if(!h1) return;
+    h1.classList.add('hidden');
+    const next = h1.nextElementSibling;
+    if(next && next.tagName === 'P') next.classList.add('hidden');
+  }));
+}
+hideLensedPageTitles();
+function setActiveNav(view){
+  const groupKey = lensGroupFor(view);
+  const navView = groupKey ? LENS_GROUPS[groupKey].nav : view;
+  sidebarLinks.forEach(l=>l.classList.toggle('active', l.dataset.view===navView));
+}
+
 function switchView(view){
   if(FINANCIAL_VIEWS.has(view) && !canViewFinancials){
     showToast("You don't have access to financial data. Ask an Admin if you need this.");
@@ -728,7 +790,8 @@ function switchView(view){
   }
   document.querySelectorAll('.view-panel').forEach(el=>el.classList.add('hidden'));
   document.getElementById('view-'+view).classList.remove('hidden');
-  sidebarLinks.forEach(l=>l.classList.toggle('active', l.dataset.view===view));
+  setActiveNav(view);
+  renderLensHeader(view);
   if(view==='home') renderHome();
   if(view==='talents') renderTable();
   if(view==='insurance') renderPolicyTable();
@@ -1825,15 +1888,15 @@ function editSelectRow(label, id, options, selected){
 
 const returnViewLabels = {
   talents: "Back to Talents",
-  insurance: "Back to Insurance",
-  workpass: "Back to Work Pass",
+  insurance: "Back to Talents · Insurance",
+  workpass: "Back to Talents · Work pass",
   home: "Back to Home",
-  contracts: "Back to Contracts",
-  finance: "Back to Payroll and Cost",
+  contracts: "Back to Talents · Contract",
+  finance: "Back to Talents · Payroll & cost",
   billing: "Back to Billing",
   operations: "Back to Timesheet and Leave",
-  offboarding: "Back to Offboarding",
-  renewals: "Back to Renewal Centre",
+  offboarding: "Back to Talents · Offboarding",
+  renewals: "Back to Renewals",
 };
 const returnViewToTab = {
   talents: "personal",
@@ -1849,7 +1912,7 @@ const returnViewToTab = {
 };
 let profileReturnView = "talents";
 
-function openTalentProfile(id, returnView){
+function openTalentProfile(id, returnView, tab){
   const c = talents.find(x=>x.id === id);
   if(!c) return;
   currentProfileId = id;
@@ -1857,11 +1920,12 @@ function openTalentProfile(id, returnView){
   profilePayrollMonthOffset = 0;
   profileTimesheetMonthOffset = 0;
   profileReturnView = returnView || "talents";
-  activeProfileTab = returnViewToTab[profileReturnView] || 'personal';
+  activeProfileTab = tab || returnViewToTab[profileReturnView] || 'personal';
   document.getElementById('backToTalentsLabel').textContent = returnViewLabels[profileReturnView] || "Back to Talents";
   document.querySelectorAll('.view-panel').forEach(el=>el.classList.add('hidden'));
   document.getElementById('view-profile').classList.remove('hidden');
-  sidebarLinks.forEach(l=>l.classList.remove('active'));
+  document.getElementById('lensHeader').classList.add('hidden');
+  setActiveNav('talents');
   renderTalentProfile(c);
   window.scrollTo(0,0);
 }
@@ -1968,7 +2032,36 @@ function editBarHtml(tabKey){
     : `<button type="button" class="profile-tab-edit-btn btn-secondary rounded-md px-3 py-1.5 text-xs font-medium" data-tab="${tabKey}">Edit Profile</button>`;
 }
 
+function profileFact(label, value, hint, color){
+  return `<div class="min-w-0"><div class="text-xs font-semibold text-[var(--muted)]">${label}</div>
+    <div class="text-[15px] font-bold mt-0.5 truncate" style="${color?`color:${color}`:''}">${value}</div>
+    ${hint ? `<div class="text-xs text-[var(--muted)] mt-0.5">${hint}</div>` : ''}</div>`;
+}
+function daysHint(d, pastWord){
+  if(d === null || d === undefined) return '';
+  if(d < 0) return `${pastWord} ${-d} day${d===-1?'':'s'} ago`;
+  if(d === 0) return 'today';
+  return `${d} day${d===1?'':'s'} left`;
+}
+function renderProfileFacts(c){
+  const lifetime = !c.workPassType || ["Singapore Citizen","PR"].includes(c.workPassType);
+  const passColor = !lifetime && c.passDaysLeft !== null && c.passDaysLeft <= 30 ? 'var(--red-text)' : '';
+  const passValue = lifetime ? escHtml(passTypeLabel(c)) : `${escHtml(c.workPassType)}${c.passDaysLeft !== null && c.passDaysLeft < 0 ? ' · expired' : ''}`;
+  const contractColor = c.contractDaysLeft <= 30 ? 'var(--red-text)' : '';
+  let html =
+    profileFact('Placement', escHtml(c.client), escHtml(dash(c.projectType))) +
+    profileFact('Work pass', passValue, lifetime ? 'no renewal needed' : (c.passExpiry ? `${fmtDate(c.passExpiry)} · ${daysHint(c.passDaysLeft, 'expired')}` : ''), passColor) +
+    profileFact('Contract', c.contractStart > today ? `Starts ${fmtDate(c.contractStart)}` : `${c.contractDaysLeft < 0 ? 'Ended' : 'Until'} ${fmtDate(c.contractEnd)}`, daysHint(c.contractDaysLeft, 'ended'), contractColor);
+  if(canViewFinancials){
+    const revenue = computeTalentRevenue(c), cost = computeTotalPayrollCost(c);
+    html += profileFact('Charge rate', escHtml(chargeRateLabel(c)), `payroll cost ${fmtMoney(cost)}`) +
+      profileFact('Gross profit / month', fmtMoney(revenue - cost), revenue ? `${((revenue-cost)/revenue*100).toFixed(1)}% margin` : '', revenue - cost < 0 ? 'var(--red-text)' : 'var(--green-text)');
+  }
+  document.getElementById('profileFacts').innerHTML = html;
+}
+
 function renderTalentProfile(c){
+  renderProfileFacts(c);
   const initials = ((c.firstName||'?')[0] + (c.lastName||'')[0]).toUpperCase();
   document.getElementById('profileAvatar').textContent = initials;
   document.getElementById('profileName').textContent = c.name;
@@ -2735,130 +2828,12 @@ document.getElementById('logoutBtn').addEventListener('click', async ()=>{
 /* ---------- HOME ---------- */
 let currentUserFirstName = "there"; // replaced with the real logged-in user's name at bootstrap
 let currentUser = null; // full { id, email, name, role } from GET /api/auth/me, set at bootstrap
-let typewriterTimer = null;
-function typewriterGreeting(){
-  const el = document.getElementById('homeGreeting');
-  const cursor = document.getElementById('homeGreetingCursor');
-  const text = `Welcome back ${currentUserFirstName}`;
-  el.textContent = "";
-  cursor.style.display = "inline-block";
-  if(typewriterTimer) clearInterval(typewriterTimer);
-  let i = 0;
-  typewriterTimer = setInterval(()=>{
-    el.textContent += text[i];
-    i++;
-    if(i >= text.length){
-      clearInterval(typewriterTimer);
-      cursor.style.display = "none";
-    }
-  }, 110);
-}
-function barListCard(title, countsObj, view){
-  const entries = Object.entries(countsObj).sort((a,b)=>b[1]-a[1]);
-  const max = Math.max(...entries.map(e=>e[1]), 1);
-  const rows = entries.map(([label,count])=>{
-    const pct = Math.max(4,(count/max)*100);
-    return `
-      <div class="mb-1.5 last:mb-0">
-        <div class="flex justify-between text-[11px] mb-0.5">
-          <span class="text-[var(--text)]">${label}</span>
-          <span class="font-semibold text-[var(--text)]">${count}</span>
-        </div>
-        <div class="w-full h-1 bg-[#EDEFF1] rounded-full overflow-hidden">
-          <div class="h-full bg-[var(--blue)] rounded-full" style="width:${pct}%"></div>
-        </div>
-      </div>`;
-  }).join('');
-  return `<div class="stat-card home-card rounded-lg p-3" onclick="switchView('${view}')"><div class="text-xs font-semibold mb-2">${title}</div>${rows}</div>`;
-}
-function homeCard(label, value, color, view, trendHtml){
-  return `
-    <div class="stat-card home-card rounded-lg px-4 py-3" onclick="switchView('${view}')">
-      <div class="text-xs text-[var(--muted)] mb-1">${label}</div>
-      <div class="text-xl font-bold whitespace-nowrap" style="color:${color}">${value}</div>
-      ${trendHtml || ''}
-    </div>`;
-}
 function homeTrend(pct, vsLabel){
   if(pct === null || pct === undefined) return '';
   const up = pct >= 0;
   const color = up ? "var(--green-text)" : "var(--red-text)";
   const arrow = up ? "▲" : "▼";
   return `<div class="text-[11px] font-semibold mt-1" style="color:${color}">${arrow} ${Math.abs(pct).toFixed(1)}% ${vsLabel||''}</div>`;
-}
-
-/* No real historical snapshots exist yet (see Phase 5 of the build plan), so KPI trend badges
-   are intentionally omitted rather than faked. Real trend data appears once monthly snapshots
-   have accumulated real history. */
-const homeKpiTrends = {};
-["activeTalents","pendingStart","onNotice","expiringPasses","expiringContracts","pendingSOW","pendingPO","pendingTimesheets","pendingInvoices"].forEach(k=>{
-  homeKpiTrends[k] = null;
-});
-
-let homeMonthOffset = 0; // 0 = current month, up to 5 = 5 months ago
-let homeMonthFilterInit = false;
-function initHomeMonthFilter(){
-  if(homeMonthFilterInit) return;
-  homeMonthFilterInit = true;
-  const sel = document.getElementById('homeMonthFilter');
-  populateMonthDropdownOptions(sel);
-  sel.addEventListener('change', e=>{
-    homeMonthOffset = Number(e.target.value);
-    renderHome();
-  });
-}
-
-function renderHomeGpChart(){
-  // No fake history: real monthly snapshots only start accumulating once the app has been live
-  // for a while (see Phase 5 of the build plan). Show an honest placeholder instead of invented trend data.
-  document.getElementById('homeRevenueChart').innerHTML = `
-    <div class="flex items-center justify-center text-center text-sm text-[var(--muted)]" style="height:220px;">
-      Monthly revenue/cost trend will appear here once a few months of real data have been recorded.
-    </div>`;
-}
-
-function renderHomeGpDonut(){
-  // Computed live from real talent payroll/billing data (current month, no fake history).
-  const data = clients.map(cl=>{
-    const group = talents.filter(c=>c.client===cl);
-    const gp = group.reduce((s,c)=>s+computeTalentRevenue(c)-computeTotalPayrollCost(c),0);
-    return { client: cl, gp };
-  }).sort((a,b)=>b.gp-a.gp);
-  const top = data.slice(0,5);
-  const othersSum = data.slice(5).reduce((s,d)=>s+d.gp,0);
-  if(othersSum > 0) top.push({ client:"Others", gp: othersSum });
-  const total = top.reduce((s,d)=>s+Math.max(d.gp,0),0) || 1;
-
-  const colors = ["#0A6ED1","#2E9E4A","#D98C0F","#E24C41","#8B5CF6","#94A3B8"];
-  const r = 76, cx = 100, cy = 100, circumference = 2*Math.PI*r;
-  let offset = 0;
-  const segments = top.map((d,i)=>{
-    const val = Math.max(d.gp,0);
-    const frac = val/total;
-    const dash = frac*circumference;
-    const seg = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${colors[i%colors.length]}" stroke-width="26" stroke-dasharray="${dash.toFixed(1)} ${(circumference-dash).toFixed(1)}" stroke-dashoffset="${(-offset).toFixed(1)}" transform="rotate(-90 ${cx} ${cy})"/>`;
-    offset += dash;
-    return seg;
-  }).join('');
-
-  const legend = top.map((d,i)=>`
-    <div class="flex items-center justify-between text-sm mb-2.5 gap-3">
-      <span class="flex items-center gap-2 min-w-0"><span class="w-2.5 h-2.5 rounded-full inline-block shrink-0" style="background:${colors[i%colors.length]}"></span><span class="truncate">${d.client}</span></span>
-      <span class="flex items-baseline gap-2 shrink-0">
-        <span class="text-[var(--muted)] text-xs">${fmtMoney(Math.max(d.gp,0))}</span>
-        <span class="font-semibold">${total ? Math.round((Math.max(d.gp,0)/total)*100) : 0}%</span>
-      </span>
-    </div>`).join('');
-
-  document.getElementById('homeGpDonut').innerHTML = `
-    <div class="flex items-center gap-6 min-h-[220px]">
-      <svg viewBox="0 0 200 200" width="200" height="200" class="shrink-0">
-        ${segments}
-        <text x="100" y="96" text-anchor="middle" font-size="19" font-weight="700" fill="var(--text)">${fmtMoneyCompact(total)}</text>
-        <text x="100" y="118" text-anchor="middle" font-size="13" fill="var(--muted)">Total GP</text>
-      </svg>
-      <div class="flex-1">${legend}</div>
-    </div>`;
 }
 
 /* ---------- Gross Profit Breakdown Modal ---------- */
@@ -2927,109 +2902,251 @@ function closeGpBreakdownModalFn(){
 document.getElementById('closeGpBreakdownModal').addEventListener('click', closeGpBreakdownModalFn);
 gpBreakdownModalOverlay.addEventListener('click', closeGpBreakdownModalFn);
 
+/* Categorical chart colours (fixed order, CVD-checked): blue, orange, aqua; grey is reserved for "Other". */
+const CHART_COLORS = ["#2a78d6","#eb6834","#1baf7a"];
+const CHART_OTHER = "#B8C0CA";
+const CHART_GRID = "#EEF1F5";
+function escHtml(v){ return String(v ?? '').replace(/[&<>"']/g, ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch])); }
+function daysFromToday(d){ return d ? Math.ceil((new Date(d) - today) / 86400000) : null; }
+function isActiveTalent(c){ return !(c.contractStart > today) && c.contractDaysLeft >= 0 && c.contractLifecycleStatus !== "Inactive"; }
+
+/* Everything that needs someone to act on it, soonest first. Items due more than 30 days out are left to the Renewals page. */
+function collectHomeTodos(){
+  const items = [];
+  talents.forEach(c=>{
+    const lifetimePass = !c.workPassType || ["Singapore Citizen","PR"].includes(c.workPassType);
+    if(!lifetimePass && c.passDaysLeft !== null && c.passDaysLeft <= 30 && c.passLifecycleStatus !== "Inactive"){
+      const stale = isPassRenewalStale(c);
+      if(c.renewalStatus !== "Completed" || stale){
+        items.push({ kind:'pass', days:c.passDaysLeft, id:c.id, tab:'workpass',
+          title:`${c.name} · ${c.workPassType}`,
+          sub: stale ? `${c.client} · renewal done, pass dates not updated` : `${c.client} · renewal ${renewalStatusDisplayLabel(c.renewalStatus || "Not Started").toLowerCase()}` });
+      }
+    }
+    if(c.contractDaysLeft <= 30 && c.contractLifecycleStatus !== "Inactive" && !(c.contractStart > today)){
+      if(c.contractLifecycleStatus === "Notice Period" || c.contractRenewalRequired === "No"){
+        if(c.contractDaysLeft >= 0) items.push({ kind:'exit', days:c.contractDaysLeft, id:c.id, tab:'offboarding', title:`${c.name} · last day`, sub:`${c.client} · contract ends ${fmtDate(c.contractEnd)}` });
+      } else {
+        const stale = isContractRenewalStale(c);
+        if(c.contractRenewalStatus !== "Completed" || stale){
+          items.push({ kind:'contract', days:c.contractDaysLeft, id:c.id, tab:'contract',
+            title: c.name,
+            sub: stale ? `${c.client} · renewal done, contract dates not updated` : `${c.client} · renewal ${renewalStatusDisplayLabel(c.contractRenewalStatus || "Not Started").toLowerCase()}` });
+        }
+      }
+    }
+  });
+  if(canViewFinancials){
+    const overdueByClient = {};
+    talents.filter(c=>c.invoiceStatus === "Overdue").forEach(c=>{
+      const g = overdueByClient[c.client] || (overdueByClient[c.client] = { count:0, amount:0, due:null });
+      g.count++; g.amount += Number(c.talentInvoiceAmount) || 0;
+      const due = c.talentInvoiceDueDate ? new Date(c.talentInvoiceDueDate) : null;
+      if(due && (!g.due || due < g.due)) g.due = due;
+    });
+    Object.entries(overdueByClient).forEach(([client,g])=>{
+      items.push({ kind:'invoice', days: g.due ? Math.min(daysFromToday(g.due), -1) : -1, view:'billing',
+        title:`${client} · ${g.count} overdue invoice${g.count>1?'s':''}`, sub: g.amount ? fmtMoney(g.amount) : 'Amount not entered' });
+    });
+  }
+  sowRecords.forEach(r=>{
+    if(!(r.sowRequired === true || r.sowRequired === "Yes")) return;
+    if(["Completed","N/A"].includes(r.sowStatus)) return;
+    const d = daysFromToday(r.dateOfCompletion);
+    if(d === null || d > 30) return;
+    items.push({ kind:'sow', days:d, view:'sowpo', title:`${r.client} · ${r.project} SOW`, sub:`${r.sowStatus}${r.remarks ? ' · '+r.remarks : ''}` });
+  });
+  return items.sort((a,b)=>a.days-b.days);
+}
+
+const TODO_KIND_LABEL = { pass:'Work pass', contract:'Contract', invoice:'Invoice', sow:'SOW', exit:'Offboarding' };
+function todoDueLabel(d){
+  if(d < 0) return { text: `${-d} day${d===-1?'':'s'} ago`, color:'var(--red-text)' };
+  if(d === 0) return { text:'Today', color:'var(--red-text)' };
+  const date = addDays(today, d).toLocaleDateString('en-SG', d <= 7 ? { weekday:'short', day:'numeric', month:'short' } : { day:'numeric', month:'short' });
+  return { text: date, color: d <= 14 ? 'var(--red-text)' : d <= 30 ? 'var(--amber-text)' : 'var(--muted)' };
+}
+function renderHomeTodo(items){
+  const groups = [
+    { key:'overdue', label:'Overdue', rows: items.filter(i=>i.days < 0) },
+    { key:'week', label:'This week', rows: items.filter(i=>i.days >= 0 && i.days <= 7) },
+    { key:'month', label:'Next 30 days', rows: items.filter(i=>i.days > 7) },
+  ];
+  const MAX_PER_GROUP = 4;
+  const html = groups.filter(g=>g.rows.length).map(g=>{
+    const rows = g.rows.slice(0, MAX_PER_GROUP).map((it,ix)=>{
+      const due = todoDueLabel(it.days);
+      const target = it.id !== undefined ? `data-id="${it.id}" data-tab="${it.tab}"` : `data-view="${it.view}"`;
+      return `<div class="todo-row">
+        <span class="todo-kind k-${it.kind}">${TODO_KIND_LABEL[it.kind]}</span>
+        <div class="min-w-0"><div class="font-semibold text-sm truncate">${escHtml(it.title)}</div><div class="text-xs text-[var(--muted)] truncate">${escHtml(it.sub)}</div></div>
+        <span class="text-xs font-bold whitespace-nowrap text-right" style="color:${due.color}">${due.text}</span>
+        <button type="button" class="todo-open btn-secondary rounded-md px-2 py-1 text-xs font-semibold" ${target}>Open</button>
+      </div>`;
+    }).join('');
+    const more = g.rows.length > MAX_PER_GROUP ? `<div class="px-4 py-2 text-xs"><button type="button" class="link" onclick="switchView('renewals')">${g.rows.length - MAX_PER_GROUP} more in Renewals →</button></div>` : '';
+    return `<div class="todo-group ${g.key==='overdue'?'overdue':''}">${g.label} <span class="cnt">${g.rows.length}</span></div>${rows}${more}`;
+  }).join('');
+  const el = document.getElementById('homeTodo');
+  el.innerHTML = html || `<div class="px-4 pb-5 pt-2 text-sm text-[var(--muted)]">Nothing due in the next 30 days.</div>`;
+  el.querySelectorAll('.todo-open').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      if(btn.dataset.id){ openTalentProfile(Number(btn.dataset.id), 'home', btn.dataset.tab); }
+      else switchView(btn.dataset.view);
+    });
+  });
+}
+
+function homeTile(label, value, color, hint, onclick){
+  return `<div class="stat-card home-card home-tile rounded-xl px-4 py-3" onclick="${onclick}">
+    <div class="text-xs font-semibold text-[var(--muted)]">${label}</div>
+    <div class="v mt-1" style="color:${color}">${value}</div>
+    <div class="text-[11.5px] text-[var(--muted)] mt-0.5">${hint}</div>
+  </div>`;
+}
+
+/* Stacked bars: overdue, then this week and the next six, split into passes and contracts. */
+function renderHomeWeeksChart(items){
+  const buckets = [{ label:'Overdue', pass:0, contract:0 }];
+  for(let w=0; w<7; w++){
+    const start = addDays(today, w*7);
+    buckets.push({ label: w===0 ? 'This wk' : start.toLocaleDateString('en-SG', { day:'numeric', month:'short' }), pass:0, contract:0 });
+  }
+  items.forEach(it=>{
+    if(it.kind !== 'pass' && it.kind !== 'contract') return;
+    const ix = it.days < 0 ? 0 : Math.floor(it.days/7) + 1;
+    if(ix < buckets.length) buckets[ix][it.kind]++;
+  });
+  const extra = talents.filter(c=>c.passDaysLeft!==null && c.passDaysLeft>30 && c.passDaysLeft<49 && !["Singapore Citizen","PR"].includes(c.workPassType) && c.renewalStatus!=="Completed").map(c=>({kind:'pass',days:c.passDaysLeft}))
+    .concat(talents.filter(c=>c.contractDaysLeft>30 && c.contractDaysLeft<49 && c.contractRenewalStatus!=="Completed" && c.contractLifecycleStatus!=="Notice Period" && c.contractLifecycleStatus!=="Inactive").map(c=>({kind:'contract',days:c.contractDaysLeft})));
+  extra.forEach(it=>{ const ix = Math.floor(it.days/7)+1; if(ix < buckets.length) buckets[ix][it.kind]++; });
+
+  const W=440, H=170, L=26, R=6, T=16, B=22;
+  const maxV = Math.max(4, ...buckets.map(b=>b.pass+b.contract));
+  const yMax = Math.ceil(maxV/2)*2;
+  const y = v => T + (H-T-B) * (1 - v/yMax);
+  const step = (W-L-R)/buckets.length, bw = Math.min(30, step*0.62);
+  const ticks = [0, yMax/2, yMax];
+  let svg = ticks.map(v=>`<line x1="${L}" x2="${W-R}" y1="${y(v)}" y2="${y(v)}" stroke="${CHART_GRID}"/><text x="${L-6}" y="${y(v)+4}" font-size="10.5" fill="#6A7686" text-anchor="end">${v}</text>`).join('');
+  buckets.forEach((b,i)=>{
+    const x0 = L + i*step + (step-bw)/2, total = b.pass + b.contract;
+    const seg = (from, to, color, isTop, tip) => {
+      if(to <= from) return '';
+      const yt = y(to), yb = y(from), r = isTop ? 4 : 0, gap = from > 0 ? 2 : 0;
+      return `<path d="M${x0},${yb-gap} V${yt+r} Q${x0},${yt} ${x0+r},${yt} H${x0+bw-r} Q${x0+bw},${yt} ${x0+bw},${yt+r} V${yb-gap} Z" fill="${color}"><title>${tip}</title></path>`;
+    };
+    svg += seg(0, b.pass, CHART_COLORS[0], b.contract===0, `${b.label}: ${b.pass} work pass${b.pass===1?'':'es'}`);
+    svg += seg(b.pass, total, CHART_COLORS[1], true, `${b.label}: ${b.contract} contract${b.contract===1?'':'s'}`);
+    if(total) svg += `<text x="${x0+bw/2}" y="${y(total)-5}" font-size="10.5" font-weight="700" fill="#1A2533" text-anchor="middle">${total}</text>`;
+    svg += `<text x="${x0+bw/2}" y="${H-6}" font-size="10.5" fill="${i===0?'var(--red-text)':'#6A7686'}" font-weight="${i===0?700:400}" text-anchor="middle">${b.label}</text>`;
+  });
+  document.getElementById('homeWeeksChart').innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Work passes and contracts expiring per week">${svg}</svg>`;
+}
+
+function renderHomeClientDonut(){
+  const counts = {};
+  talents.filter(isActiveTalent).forEach(c=>{ counts[c.client] = (counts[c.client]||0) + 1; });
+  const sorted = Object.entries(counts).sort((a,b)=>b[1]-a[1]);
+  const total = sorted.reduce((s,[,v])=>s+v,0);
+  const slices = sorted.slice(0,3).map(([n,v],i)=>({ n, v, color: CHART_COLORS[i] }));
+  const rest = sorted.slice(3);
+  if(rest.length) slices.push({ n: rest.length===1 ? rest[0][0] : `Other (${rest.length} clients)`, v: rest.reduce((s,[,v])=>s+v,0), color: CHART_OTHER });
+  const el = document.getElementById('homeClientDonut');
+  if(!total){ el.innerHTML = `<div class="text-sm text-[var(--muted)] py-6">No active talents yet.</div>`; return; }
+  const cx=80, cy=80, ro=64, ri=44, gap = slices.length>1 ? 0.035 : 0;
+  let a = -Math.PI/2;
+  const P = (r,t)=>`${(cx+r*Math.cos(t)).toFixed(2)},${(cy+r*Math.sin(t)).toFixed(2)}`;
+  const arcs = slices.map(s=>{
+    const sweep = s.v/total*2*Math.PI;
+    if(slices.length === 1) return `<circle cx="${cx}" cy="${cy}" r="${(ro+ri)/2}" fill="none" stroke="${s.color}" stroke-width="${ro-ri}"><title>${escHtml(s.n)}: ${s.v}</title></circle>`;
+    const a0 = a + gap/2, a1 = a + sweep - gap/2; a += sweep;
+    const lg = (a1-a0) > Math.PI ? 1 : 0;
+    return `<path d="M${P(ro,a0)} A${ro},${ro} 0 ${lg} 1 ${P(ro,a1)} L${P(ri,a1)} A${ri},${ri} 0 ${lg} 0 ${P(ri,a0)} Z" fill="${s.color}"><title>${escHtml(s.n)}: ${s.v} talent${s.v===1?'':'s'}</title></path>`;
+  }).join('');
+  el.innerHTML = `<div class="flex items-center gap-5">
+    <svg viewBox="0 0 160 160" width="140" height="140" class="shrink-0" role="img" aria-label="Active talents by client">${arcs}
+      <text x="80" y="80" text-anchor="middle" font-size="24" font-weight="800" fill="#1A2533">${total}</text>
+      <text x="80" y="98" text-anchor="middle" font-size="11" fill="#6A7686">active</text></svg>
+    <div class="flex-1 min-w-0 flex flex-col gap-2 text-sm">${slices.map(s=>`
+      <div class="grid grid-cols-[12px_minmax(0,1fr)_auto_auto] gap-2 items-center cursor-pointer hover:text-[var(--blue-dark)]" onclick="switchView('talents')">
+        <i class="w-2.5 h-2.5 rounded-[3px] inline-block" style="background:${s.color}"></i><span class="truncate">${escHtml(s.n)}</span>
+        <b class="num">${s.v}</b><span class="num text-xs text-[var(--muted)] w-9 text-right">${Math.round(s.v/total*100)}%</span></div>`).join('')}</div></div>`;
+}
+
+function clientMoneyRows(){
+  return clients.map(cl=>{
+    const group = talents.filter(c=>c.client===cl);
+    const revenue = group.reduce((s,c)=>s+computeTalentRevenue(c),0);
+    const cost = group.reduce((s,c)=>s+computeTotalPayrollCost(c),0);
+    return { client: cl, revenue, cost, gp: revenue-cost, margin: revenue ? (revenue-cost)/revenue*100 : null };
+  }).filter(r=>r.revenue || r.cost);
+}
+function renderHomeMoney(revenue, cost, gp){
+  const max = Math.max(revenue, cost, Math.abs(gp), 1);
+  const bar = (label, v, color) => `<div class="grid grid-cols-[110px_minmax(0,1fr)_120px] gap-3 items-center">
+      <span class="text-sm">${label}</span>
+      <div class="h-3 bg-[#EEF1F4] rounded-r"><div class="h-full rounded-r" style="width:${Math.max(0, v/max*100).toFixed(1)}%;background:${color}"></div></div>
+      <span class="num text-sm font-bold text-right">${fmtMoney(v)}</span></div>`;
+  document.getElementById('homeMoneyChart').innerHTML = `<div class="flex flex-col gap-3">
+      <div class="text-xs font-semibold text-[var(--muted)]">This month</div>
+      ${bar('Revenue', revenue, CHART_COLORS[0])}${bar('Cost', cost, CHART_COLORS[1])}${bar('Gross profit', gp, CHART_COLORS[2])}
+      <p class="text-xs text-[var(--muted)] mt-1">A 6-month trend line will appear here once the app keeps a monthly history of revenue and cost.</p></div>`;
+  const rows = clientMoneyRows().sort((a,b)=>(b.margin??-999)-(a.margin??-999));
+  document.getElementById('homeMarginChart').innerHTML = rows.length ? `<div class="flex flex-col gap-2.5">${rows.map(r=>{
+    const m = r.margin;
+    const w = m === null ? 0 : Math.max(0, Math.min(100, m));
+    return `<div class="grid grid-cols-[minmax(0,90px)_minmax(0,1fr)_auto] gap-3 items-center" title="${escHtml(r.client)}: revenue ${fmtMoney(r.revenue)}, gross profit ${fmtMoney(r.gp)}">
+      <span class="text-sm truncate">${escHtml(r.client)}</span>
+      <div class="h-2.5 bg-[#EEF1F4] rounded-r"><div class="h-full rounded-r" style="width:${w.toFixed(1)}%;background:${CHART_COLORS[0]}"></div></div>
+      <span class="num text-sm text-right whitespace-nowrap"><b style="color:${m!==null && m<0?'var(--red-text)':'var(--text)'}">${m===null?'-':m.toFixed(1)+'%'}</b> <span class="text-xs text-[var(--muted)]">${fmtMoneyCompact(r.gp)}</span></span></div>`;
+  }).join('')}</div>` : `<div class="text-sm text-[var(--muted)]">No billing data yet.</div>`;
+}
+
+function updateNavBadges(items){
+  const due = (items || collectHomeTodos()).filter(i=>i.kind==='pass' || i.kind==='contract').length;
+  document.getElementById('navBadgeRenewals').textContent = due ? due : '';
+  const overdueInvoices = canViewFinancials ? talents.filter(c=>c.invoiceStatus === "Overdue").length : 0;
+  document.getElementById('navBadgeBilling').textContent = overdueInvoices ? overdueInvoices : '';
+}
+
+let homeMonthOffset = 0; // the GP breakdown modal opens on this month
 let homeDashboardData = null; // fetched from GET /api/dashboard/home at bootstrap (see bootstrap())
 
 function renderHome(){
-  typewriterGreeting();
-  initHomeMonthFilter();
-  const total = talents.length;
+  const hour = new Date().getHours();
+  const greet = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+  document.getElementById('homeGreeting').textContent = `${greet}, ${currentUserFirstName}`;
+  const active = talents.filter(isActiveTalent);
+  const activeClients = new Set(active.map(c=>c.client)).size;
+  document.getElementById('homeSubline').textContent =
+    `${today.toLocaleDateString('en-SG', { weekday:'long', day:'numeric', month:'long', year:'numeric' })} · ${active.length} active talent${active.length===1?'':'s'} across ${activeClients} client${activeClients===1?'':'s'}`;
 
-  /* ---- Row 1: workforce & compliance (computed live from real talent data) ---- */
-  const pendingStart = talents.filter(c=>c.contractStart > today).length;
-  const onNotice = talents.filter(c=>c.contractDaysLeft >= 0 && c.contractDaysLeft <= 30).length;
-  const activeTalents = total - pendingStart - talents.filter(c=>c.contractDaysLeft < 0).length;
-  const expiringPasses = talents.filter(c=>c.passDaysLeft!==null && c.passDaysLeft>=0 && c.passDaysLeft<=30).length;
-  const expiringContracts = talents.filter(c=>c.contractDaysLeft>=0 && c.contractDaysLeft<=30).length;
-  const pendingSOW = homeDashboardData ? homeDashboardData.pendingSow : 0;
+  const items = collectHomeTodos();
+  const passes = items.filter(i=>i.kind==='pass'), contracts = items.filter(i=>i.kind==='contract');
+  const overduePasses = passes.filter(i=>i.days<0).length, overdueContracts = contracts.filter(i=>i.days<0).length;
+  const d = homeDashboardData || {};
+  const revenue = d.monthlyRevenue || 0, cost = d.monthlyCost || 0, gp = d.monthlyGrossProfit || 0;
+  const margin = revenue ? gp/revenue*100 : 0;
 
-  document.getElementById('homeKpiRow1').innerHTML =
-    homeCard("Total Active Talents", activeTalents, "var(--text)", "talents", homeTrend(homeKpiTrends.activeTalents, "vs last month")) +
-    homeCard("Pending Start", pendingStart, "var(--amber-text)", "talents", homeTrend(homeKpiTrends.pendingStart, "vs last month")) +
-    homeCard("On Notice", onNotice, "var(--orange-text)", "offboarding", homeTrend(homeKpiTrends.onNotice, "vs last month")) +
-    homeCard("Expiring Work Passes", expiringPasses, "var(--red-text)", "workpass", `<div class="text-[11px] text-[var(--muted)] mt-1">&lt;30 days</div>`) +
-    homeCard("Expiring Contracts", expiringContracts, "var(--red-text)", "contracts", `<div class="text-[11px] text-[var(--muted)] mt-1">&lt;30 days</div>`) +
-    homeCard("Pending SOW", pendingSOW, "var(--amber-text)", "analytics", homeTrend(homeKpiTrends.pendingSOW, "vs last month"));
+  let tiles =
+    homeTile("Work passes to renew", passes.length, passes.length ? "var(--red-text)" : "var(--text)", overduePasses ? `due within 30 days · ${overduePasses} already expired` : "due within 30 days", "switchView('workpass')") +
+    homeTile("Contracts to renew", contracts.length, contracts.length ? "var(--red-text)" : "var(--text)", overdueContracts ? `due within 30 days · ${overdueContracts} overdue` : "due within 30 days", "switchView('contracts')");
+  if(canViewFinancials){
+    const overdueInv = talents.filter(c=>c.invoiceStatus==="Overdue").length;
+    tiles += homeTile("Invoices unpaid", d.pendingInvoices ?? 0, (d.pendingInvoices ?? 0) ? "var(--amber-text)" : "var(--text)", `${overdueInv} overdue`, "switchView('billing')") +
+      homeTile("Gross profit this month", fmtMoneyCompact(gp), gp >= 0 ? "var(--green-text)" : "var(--red-text)", `${margin.toFixed(1)}% margin on ${fmtMoneyCompact(revenue)}`, "openGpBreakdownModal()");
+  } else {
+    tiles += homeTile("Timesheets pending", d.pendingTimesheets ?? 0, (d.pendingTimesheets ?? 0) ? "var(--amber-text)" : "var(--text)", "not yet submitted", "switchView('operations')") +
+      homeTile("SOW / PO pending", `${d.pendingSow ?? 0} / ${d.pendingPo ?? 0}`, "var(--text)", "not yet completed", "switchView('sowpo')");
+  }
+  document.getElementById('homeTiles').innerHTML = tiles;
 
-  /* ---- Row 2: pending actions & financials (from the real /api/dashboard/home aggregates) ---- */
-  const pendingPO = homeDashboardData ? homeDashboardData.pendingPo : 0;
-  const pendingTimesheets = homeDashboardData ? homeDashboardData.pendingTimesheets : 0;
-  const pendingInvoices = homeDashboardData ? homeDashboardData.pendingInvoices : 0;
-  const monthlyRevenue = homeDashboardData ? homeDashboardData.monthlyRevenue : 0;
-  const monthlyCost = homeDashboardData ? homeDashboardData.monthlyCost : 0;
-  const monthlyGp = homeDashboardData ? homeDashboardData.monthlyGrossProfit : 0;
-  const monthlyMargin = monthlyRevenue ? (monthlyGp/monthlyRevenue)*100 : 0;
-
-  document.getElementById('homeKpiRow2').innerHTML =
-    homeCard("Pending PO", pendingPO, "var(--amber-text)", "analytics", homeTrend(homeKpiTrends.pendingPO, "vs last month")) +
-    homeCard("Pending Timesheets", pendingTimesheets, "var(--amber-text)", "operations", homeTrend(homeKpiTrends.pendingTimesheets, "vs last month")) +
-    homeCard("Pending Invoices", pendingInvoices, "var(--amber-text)", "analytics", homeTrend(homeKpiTrends.pendingInvoices, "vs last month")) +
-    homeCard("Monthly Revenue", fmtMoney(monthlyRevenue), "var(--text)", "finance", homeTrend(null, "vs last month")) +
-    homeCard("Monthly Cost", fmtMoney(monthlyCost), "var(--text)", "finance", homeTrend(null, "vs last month")) +
-    `<div class="rounded-lg px-4 py-3 cursor-pointer" style="background:var(--blue);" onclick="openGpBreakdownModal()">
-      <div class="text-xs text-blue-100 mb-1" style="color:#DCEBFB;">Monthly GP</div>
-      <div class="text-xl font-bold text-white whitespace-nowrap">${fmtMoney(monthlyGp)}</div>
-      <div class="text-[11px] mt-1" style="color:#DCEBFB;">${monthlyMargin.toFixed(1)}% Margin</div>
-    </div>`;
-
-  renderHomeGpChart();
-  renderHomeGpDonut();
-
-  const approaching = talents.filter(c=>c.alert);
-  renderHomeExpiryTable(approaching);
-}
-
-let homeExpirySortKey = "passExpiry";
-let homeExpirySortDir = 1;
-let homeExpirySortInit = false;
-
-function initHomeExpirySort(){
-  if(homeExpirySortInit) return;
-  homeExpirySortInit = true;
-  document.querySelectorAll('.homeExpiry-sortable[data-key]').forEach(th=>{
-    th.addEventListener('click', ()=>{
-      const key = th.dataset.key;
-      if(homeExpirySortKey === key){ homeExpirySortDir *= -1; } else { homeExpirySortKey = key; homeExpirySortDir = 1; }
-      updateHomeExpirySortArrows();
-      renderHomeExpiryTable(talents.filter(c=>c.alert));
-    });
-  });
-  updateHomeExpirySortArrows();
-}
-function updateHomeExpirySortArrows(){
-  document.querySelectorAll('.homeExpiry-sort-caret').forEach(el=>{
-    const key = el.dataset.arrow;
-    const isActive = key === homeExpirySortKey;
-    el.classList.toggle('active', isActive);
-    el.textContent = isActive ? (homeExpirySortDir === 1 ? "▲" : "▼") : "▲";
-  });
-}
-
-function renderHomeExpiryTable(approaching){
-  initHomeExpirySort();
-  let rows = [...approaching];
-  rows.sort((a,b)=>{
-    let av = a[homeExpirySortKey], bv = b[homeExpirySortKey];
-    if(av instanceof Date){ av = av.getTime(); bv = bv.getTime(); }
-    if(typeof av === "string"){ av = av.toLowerCase(); bv = bv.toLowerCase(); }
-    if(av < bv) return -1 * homeExpirySortDir;
-    if(av > bv) return 1 * homeExpirySortDir;
-    return 0;
-  });
-  rows = rows.slice(0,10);
-
-  document.getElementById('homeExpiryList').innerHTML = rows.length ? rows.map(c=>`
-    <tr class="row-hover border-b border-[var(--border)]">
-      <td class="px-4 py-1 font-medium whitespace-nowrap">
-        <span class="home-expiry-name-link cursor-pointer hover:underline hover:text-[var(--blue-dark)]" data-id="${c.id}">${c.name}</span>
-      </td>
-      <td class="px-4 py-1 text-[var(--muted)] whitespace-nowrap">${c.client}</td>
-      <td class="px-4 py-1 whitespace-nowrap ${c.passDaysLeft!==null && c.passDaysLeft<=30?'date-alert':''}">${fmtDate(c.passExpiry)}</td>
-      <td class="px-4 py-1 whitespace-nowrap ${c.contractDaysLeft<=30?'date-alert':''}">${fmtDate(c.contractEnd)}</td>
-    </tr>`).join('') : `<tr><td colspan="4" class="px-4 py-4 text-sm text-[var(--muted)]">No approaching expiries.</td></tr>`;
-
-  document.querySelectorAll('.home-expiry-name-link').forEach(el=>{
-    el.addEventListener('click', ()=> openTalentProfile(Number(el.dataset.id), 'home'));
-  });
+  renderHomeTodo(items);
+  renderHomeWeeksChart(items);
+  renderHomeClientDonut();
+  document.getElementById('homeMoneyRow').classList.toggle('hidden', !canViewFinancials);
+  if(canViewFinancials) renderHomeMoney(revenue, cost, gp);
+  updateNavBadges(items);
 }
 
 /* ---------- WORK PASS ---------- */
@@ -7024,6 +7141,7 @@ async function bootstrap(){
   renderStats();
   updateSortArrows();
   renderTable();
+  updateNavBadges();
   const params = new URLSearchParams(window.location.search);
   if(params.get('view') === 'home'){
     history.replaceState(null, '', window.location.pathname);
