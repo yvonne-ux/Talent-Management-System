@@ -3088,7 +3088,6 @@ function renderHomeMoney(revenue, cost, gp){
       <div class="h-3 bg-[#EEF1F4] rounded-r"><div class="h-full rounded-r" style="width:${Math.max(0, v/max*100).toFixed(1)}%;background:${color}"></div></div>
       <span class="num text-sm font-bold text-right">${fmtMoney(v)}</span></div>`;
   document.getElementById('homeMoneyChart').innerHTML = `<div class="flex flex-col gap-3">
-      <div class="text-xs font-semibold text-[var(--muted)]">This month</div>
       ${bar('Revenue', revenue, CHART_COLORS[0])}${bar('Cost', cost, CHART_COLORS[1])}${bar('Gross profit', gp, CHART_COLORS[2])}
       <p class="text-xs text-[var(--muted)] mt-1">A 6-month trend line will appear here once the app keeps a monthly history of revenue and cost.</p></div>`;
   const rows = clientMoneyRows().sort((a,b)=>(b.margin??-999)-(a.margin??-999));
@@ -3119,7 +3118,7 @@ function renderHome(){
   const active = talents.filter(isActiveTalent);
   const activeClients = new Set(active.map(c=>c.client)).size;
   document.getElementById('homeSubline').textContent =
-    `${today.toLocaleDateString('en-SG', { weekday:'long', day:'numeric', month:'long', year:'numeric' })} · ${active.length} active talent${active.length===1?'':'s'} across ${activeClients} client${activeClients===1?'':'s'}`;
+    today.toLocaleDateString('en-SG', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
 
   const items = collectHomeTodos();
   const passes = items.filter(i=>i.kind==='pass'), contracts = items.filter(i=>i.kind==='contract');
@@ -3134,17 +3133,32 @@ function renderHome(){
   if(canViewFinancials){
     const overdueInv = talents.filter(c=>c.invoiceStatus==="Overdue").length;
     tiles += homeTile("Invoices unpaid", d.pendingInvoices ?? 0, (d.pendingInvoices ?? 0) ? "var(--amber-text)" : "var(--text)", `${overdueInv} overdue`, "switchView('billing')") +
-      homeTile("Gross profit this month", fmtMoneyCompact(gp), gp >= 0 ? "var(--green-text)" : "var(--red-text)", `${margin.toFixed(1)}% margin on ${fmtMoneyCompact(revenue)}`, "openGpBreakdownModal()");
+      homeTile("Timesheets pending", d.pendingTimesheets ?? 0, (d.pendingTimesheets ?? 0) ? "var(--amber-text)" : "var(--text)", "not yet submitted", "switchView('operations')");
   } else {
     tiles += homeTile("Timesheets pending", d.pendingTimesheets ?? 0, (d.pendingTimesheets ?? 0) ? "var(--amber-text)" : "var(--text)", "not yet submitted", "switchView('operations')") +
       homeTile("SOW / PO pending", `${d.pendingSow ?? 0} / ${d.pendingPo ?? 0}`, "var(--text)", "not yet completed", "switchView('sowpo')");
   }
   document.getElementById('homeTiles').innerHTML = tiles;
 
+  // Headline: active talents and this month's gross profit sit at the top as the performance overview.
+  document.getElementById('homeActiveCount').textContent = active.length;
+  const activeSub = [`across ${activeClients} client${activeClients===1?'':'s'}`];
+  if(d.pendingStart) activeSub.push(`${d.pendingStart} starting soon`);
+  if(d.onNotice) activeSub.push(`${d.onNotice} on notice`);
+  document.getElementById('homeActiveSub').textContent = activeSub.join(' · ');
+  document.getElementById('homeGpCard').classList.toggle('hidden', !canViewFinancials);
+  document.getElementById('homeMarginCard').classList.toggle('hidden', !canViewFinancials);
+  document.getElementById('homeHeadline').classList.toggle('lg:grid-cols-2', canViewFinancials);
+  if(canViewFinancials){
+    const gpEl = document.getElementById('homeGpValue');
+    gpEl.textContent = fmtMoney(gp);
+    gpEl.style.color = gp >= 0 ? 'var(--green-text)' : 'var(--red-text)';
+    document.getElementById('homeGpSub').textContent = `${margin.toFixed(1)}% margin on ${fmtMoney(revenue)} revenue · ${today.toLocaleDateString('en-SG', { month:'long', year:'numeric' })}`;
+  }
+
   renderHomeTodo(items);
   renderHomeWeeksChart(items);
   renderHomeClientDonut();
-  document.getElementById('homeMoneyRow').classList.toggle('hidden', !canViewFinancials);
   if(canViewFinancials) renderHomeMoney(revenue, cost, gp);
   updateNavBadges(items);
 }

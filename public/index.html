@@ -53,6 +53,7 @@
   .todo-kind.k-exit{ background:#F1E4D8; color:#7A4A1E; }
   .chart-legend{ display:flex; flex-wrap:wrap; gap:14px; font-size:12px; color:#3D4957; }
   .chart-legend i{ display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:6px; vertical-align:-1px; }
+  .home-hero-v{ font-size:44px; font-weight:800; line-height:1.05; letter-spacing:-0.02em; }
   .home-tile .v{ font-size:26px; font-weight:800; line-height:1.15; font-variant-numeric:tabular-nums; }
   .num{ font-variant-numeric:tabular-nums; }
   .facts-strip{ display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); border-top:1px solid var(--border); }
@@ -373,6 +374,21 @@
         </div>
       </div>
 
+      <div id="homeHeadline" class="grid lg:grid-cols-2 gap-3 mb-4">
+        <div class="stat-card rounded-xl p-5" id="homeActiveCard">
+          <div class="flex items-baseline justify-between mb-1"><h2 class="text-sm font-bold">Active talents</h2><button type="button" class="text-xs link" onclick="switchView('talents')">All talents →</button></div>
+          <div class="home-hero-v num" id="homeActiveCount"></div>
+          <div class="text-sm text-[var(--muted)] mb-4" id="homeActiveSub"></div>
+          <div id="homeClientDonut"></div>
+        </div>
+        <div class="stat-card rounded-xl p-5" id="homeGpCard">
+          <div class="flex items-baseline justify-between mb-1"><h2 class="text-sm font-bold">Gross profit this month</h2><button type="button" class="text-xs link" onclick="openGpBreakdownModal()">Breakdown by client →</button></div>
+          <div class="home-hero-v num" id="homeGpValue"></div>
+          <div class="text-sm text-[var(--muted)] mb-4" id="homeGpSub"></div>
+          <div id="homeMoneyChart"></div>
+        </div>
+      </div>
+
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4" id="homeTiles"></div>
 
       <div class="grid lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] gap-3 mb-4">
@@ -389,21 +405,10 @@
             <div class="chart-legend mb-1"><span><i style="background:#2a78d6"></i>Work passes</span><span><i style="background:#eb6834"></i>Contracts</span></div>
             <div id="homeWeeksChart"></div>
           </div>
-          <div class="stat-card rounded-xl p-4">
-            <div class="flex items-baseline justify-between mb-2"><h2 class="text-sm font-bold">Active talents by client</h2><span class="text-xs text-[var(--muted)]">today</span></div>
-            <div id="homeClientDonut"></div>
+          <div class="stat-card rounded-xl p-4" id="homeMarginCard">
+            <div class="flex items-baseline justify-between mb-3"><h2 class="text-sm font-bold">Margin by client</h2><span class="text-xs text-[var(--muted)]">this month</span></div>
+            <div id="homeMarginChart"></div>
           </div>
-        </div>
-      </div>
-
-      <div id="homeMoneyRow" class="grid lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] gap-3">
-        <div class="stat-card rounded-xl p-4">
-          <div class="flex items-baseline justify-between mb-3"><h2 class="text-sm font-bold">Revenue, cost and gross profit</h2><button type="button" class="text-xs link" onclick="openGpBreakdownModal()">Breakdown by client →</button></div>
-          <div id="homeMoneyChart"></div>
-        </div>
-        <div class="stat-card rounded-xl p-4">
-          <div class="flex items-baseline justify-between mb-3"><h2 class="text-sm font-bold">Margin by client</h2><span class="text-xs text-[var(--muted)]">this month</span></div>
-          <div id="homeMarginChart"></div>
         </div>
       </div>
     </div>
