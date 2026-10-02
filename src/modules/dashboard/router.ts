@@ -36,7 +36,7 @@ dashboardRouter.get(
 
       if (t.payroll && t.talentBilling && t.workPass) {
         monthlyRevenue += talentRevenue(t.talentBilling.chargeRate, t.talentBilling.billingType);
-        monthlyCost += totalEmployerCost(t.payroll, t.workPass.workPassType);
+        monthlyCost += totalEmployerCost(t.payroll, t.workPass.workPassType, t.contract?.contractStart, today);
       }
     }
 

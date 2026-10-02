@@ -48,7 +48,14 @@ function refreshPassTypeFilters(){
   msWorkpassType.setOptions(opts);
   msRenewalWorkpassType.setOptions(opts.filter(t=>!["Singapore Citizen","PR","Not Applicable"].includes(t)));
 }
-function getWorkPassAdminFee(c){ return workPassAdminFees[c.workPassType] ?? 0; }
+// The work pass admin fee is a one-time charge in the month the talent joins (contract start),
+// not a recurring monthly cost. No start date on file means no fee is charged.
+function isJoinMonth(c, month = today){
+  const start = c.contractStart;
+  return !!start && start.getFullYear() === month.getFullYear() && start.getMonth() === month.getMonth();
+}
+function oneTimeWorkPassAdminFee(c){ return workPassAdminFees[c.workPassType] ?? 0; }
+function getWorkPassAdminFee(c, month = today){ return isJoinMonth(c, month) ? oneTimeWorkPassAdminFee(c) : 0; }
 const sowStatuses = ["Signed","Pending","Drafted"];
 const poStatuses = ["Received","Raised","Pending"];
 const contractStatusOptions = ["Drafted","Pending Signature","Signed","Expired","Terminated"];
@@ -233,13 +240,13 @@ function randomPayrollFields(c){
   return { cpf, skillsDevelopmentLevy, wica, medicalInsuranceCost, allowances, claimsReimbursements, overtime, noPayLeaveDeduction, otherStatutoryCosts };
 }
 
-function computeTotalPayrollCost(c){
+function computeTotalPayrollCost(c, month = today){
   // salary is null when the server redacted financial fields for a Standard user without
   // financials access — never fabricate a partial total from just the admin fee in that case.
   if(c.salary === null || c.salary === undefined) return null;
   return c.salary + (c.cpf||0) + c.skillsDevelopmentLevy + c.wica + c.medicalInsuranceCost
     + c.allowances + c.claimsReimbursements + c.overtime - c.noPayLeaveDeduction + c.otherStatutoryCosts
-    + getWorkPassAdminFee(c);
+    + getWorkPassAdminFee(c, month);
 }
 
 // Working days for daily-rate billing: every Mon-Fri in the month. Public holidays and leave
@@ -3738,6 +3745,7 @@ function updateFinanceSortArrows(){
 
 /* Per-talent month-scaled figures for the Payroll & Cost view (offset 0 = current, exact live values) */
 function financeTalentFigures(c, monthOffset){
+  const month = new Date(today.getFullYear(), today.getMonth()-monthOffset, 1);
   const factor = seededVariance(c.id, monthOffset);
   const revFactor = seededVariance(c.id + 100000, monthOffset);
   const salary = c.salary*factor;
@@ -3747,6 +3755,9 @@ function financeTalentFigures(c, monthOffset){
   const wica = c.wica*factor;
   const insurance = c.medicalInsuranceCost*factor;
   const otherStatutoryCosts = c.otherStatutoryCosts*factor;
+  // One-time fee in the join month only, so it isn't scaled by the month's estimate variance.
+  const adminFee = getWorkPassAdminFee(c, month);
+  const totalCost = computeTotalPayrollCost(c, month);
   return {
     salary, cpf, sdl, wica, insurance, levy, otherStatutoryCosts,
     serviceFee: c.serviceFee*factor,
@@ -3754,14 +3765,14 @@ function financeTalentFigures(c, monthOffset){
     claims: c.claimsReimbursements*factor,
     overtime: c.overtime*factor,
     noPayLeaveDeduction: c.noPayLeaveDeduction*factor,
-    adminFee: getWorkPassAdminFee(c)*factor,
+    adminFee,
     // Distinct from `totalCost` below: a narrower core-cost subtotal for the Payroll & Cost
     // table (excludes admin fee, service fee, allowances/claims/overtime). Other Statutory
     // Costs is included because it's where imports stash the gap between a sheet's aggregate
     // "Total Employment Cost" figure and what we can break out into salary/cpf/sdl/wica/etc —
     // omitting it made imported totals silently collapse to just the basic salary.
     totalEmploymentCost: salary + levy + cpf + sdl + wica + insurance + otherStatutoryCosts,
-    totalCost: computeTotalPayrollCost(c)*factor,
+    totalCost: totalCost === null ? 0 : (totalCost - adminFee)*factor + adminFee,
     // Daily-rate talents bill the real weekday count of the viewed month, so no estimate variance.
     revenue: c.billingType === "Daily"
       ? computeTalentRevenue(c, new Date(today.getFullYear(), today.getMonth()-monthOffset, 1))
@@ -4632,10 +4643,12 @@ function computeClientMetrics(client){
     const cost = computeTotalPayrollCost(c);
     monthlyRevenue += rev;
     monthlyCost += cost;
-    workPassAdminFee += getWorkPassAdminFee(c);
+    const fee = getWorkPassAdminFee(c);
+    workPassAdminFee += fee;
     const months = Math.max(1, Math.round((c.contractEnd - c.contractStart) / (1000*60*60*24*30)));
     projectRevenue += rev*months;
-    projectCost += cost*months;
+    // The admin fee is charged once over the whole contract, not every month.
+    if(cost !== null) projectCost += (cost - fee)*months + (c.contractStart ? oneTimeWorkPassAdminFee(c) : 0);
   });
   const grossProfit = monthlyRevenue - monthlyCost;
   const grossMargin = monthlyRevenue ? (grossProfit/monthlyRevenue)*100 : 0;

@@ -37,6 +37,18 @@ export function workPassAdminFee(workPassType: string): number {
   return WORK_PASS_ADMIN_FEES[workPassType] ?? 0;
 }
 
+// The admin fee is a one-time charge in the month the talent joins (contract start), so it only
+// counts toward that month's cost. No start date on file means no fee is charged.
+export function workPassAdminFeeForMonth(
+  workPassType: string,
+  contractStart: Date | null | undefined,
+  month: Date = new Date()
+): number {
+  if (!contractStart) return 0;
+  const joinMonth = contractStart.getFullYear() === month.getFullYear() && contractStart.getMonth() === month.getMonth();
+  return joinMonth ? workPassAdminFee(workPassType) : 0;
+}
+
 // CPF (Singapore's mandatory retirement contribution) only applies to Singapore Citizens and
 // PRs — not EP/S Pass/Work Permit holders, and not talents with no work pass on file.
 export function isCpfEligible(workPassType: string | null | undefined): boolean {
@@ -56,7 +68,12 @@ export interface PayrollLike {
   otherStatutoryCosts: number;
 }
 
-export function totalEmployerCost(payroll: PayrollLike, workPassType: string): number {
+export function totalEmployerCost(
+  payroll: PayrollLike,
+  workPassType: string,
+  contractStart: Date | null | undefined,
+  month: Date = new Date()
+): number {
   return (
     payroll.salary +
     payroll.cpf +
@@ -68,7 +85,7 @@ export function totalEmployerCost(payroll: PayrollLike, workPassType: string): n
     payroll.overtime -
     payroll.noPayLeaveDeduction +
     payroll.otherStatutoryCosts +
-    workPassAdminFee(workPassType)
+    workPassAdminFeeForMonth(workPassType, contractStart, month)
   );
 }
 
