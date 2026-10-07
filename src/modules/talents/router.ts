@@ -8,6 +8,7 @@ import { upsertClientByName, upsertProjectTypeByName, upsertLegalEntityByName, u
 import { nextRenewalSeq, isExpiryWithinRenewalWindow } from "../../lib/renewalRules";
 import { canViewFinancialsForRequest } from "../../lib/permissions";
 import { isCpfEligible } from "../../lib/computed";
+import { diffFields, logChanges, FieldChange } from "../../lib/changeLog";
 
 export const talentsRouter = Router();
 talentsRouter.use(requireAuth);
@@ -119,6 +120,7 @@ talentsRouter.post(
     await prisma.talentBilling.create({
       data: { talentId: talent.id, chargeRate, billingType, invoiceStatus: "Pending" },
     });
+    await logChanges(talent.id, "talent", { action: "added" }, { userId: req.session.userId });
 
     const full = await prisma.talent.findUniqueOrThrow({ where: { id: talent.id }, include: talentInclude });
     res.status(201).json(serializeTalent(full, await canViewFinancialsForRequest(req)));
@@ -163,6 +165,7 @@ talentsRouter.post(
     if (!Array.isArray(rows) || rows.length === 0) return void res.status(400).json({ error: "rows must be a non-empty array" });
 
     const client = await upsertClientByName(clientName.trim());
+    const logCtx = { userId: req.session.userId, source: "import" as const };
     let created = 0;
     let updated = 0;
     const skipped: { row: number; name: string; reason: string }[] = [];
@@ -225,6 +228,21 @@ talentsRouter.post(
       if (poQuotationNotes) contractContactData.poQuotationNotes = poQuotationNotes;
 
       if (existing) {
+        const before = await prisma.talent.findUniqueOrThrow({
+          where: { id: existing.id },
+          include: { client: true, entity: true, caseOwner: true, contract: true, workPass: true, payroll: true, talentBilling: true },
+        });
+        const changes: [string, FieldChange[]][] = [];
+
+        const personalAfter: Record<string, unknown> = { client: client.name };
+        if (r.position) personalAfter.jobTitle = String(r.position).trim();
+        if (nric) personalAfter.nric = nric;
+        if (entity) personalAfter.entity = entity.name;
+        if (caseOwner) personalAfter.caseOwner = caseOwner.name;
+        changes.push(["personal", diffFields("personal", {
+          client: before.client?.name, jobTitle: before.jobTitle, nric: before.nric, entity: before.entity?.name, caseOwner: before.caseOwner?.name,
+        }, personalAfter)]);
+
         const talentData: Record<string, unknown> = { clientId: client.id };
         if (r.position) talentData.jobTitle = String(r.position).trim();
         if (nric) talentData.nric = nric;
@@ -237,24 +255,27 @@ talentsRouter.post(
         if (r.contractEndDate) contractUpdate.contractEnd = contractEnd;
         if (Object.keys(contractUpdate).length) {
           await prisma.contract.update({ where: { talentId: existing.id }, data: contractUpdate });
+          changes.push(["contract", diffFields("contract", before.contract, contractUpdate)]);
         }
         if (salary) {
-          await prisma.payroll.update({
-            where: { talentId: existing.id },
-            data: { salary, cpf, levy, skillsDevelopmentLevy, wica, medicalInsuranceCost, serviceFee, otherStatutoryCosts },
-          });
+          const payrollData = { salary, cpf, levy, skillsDevelopmentLevy, wica, medicalInsuranceCost, serviceFee, otherStatutoryCosts };
+          await prisma.payroll.update({ where: { talentId: existing.id }, data: payrollData });
+          changes.push(["payroll", diffFields("payroll", before.payroll, payrollData)]);
         }
-        if (chargeRate) await prisma.talentBilling.update({ where: { talentId: existing.id }, data: { chargeRate, billingType } });
+        if (chargeRate) {
+          await prisma.talentBilling.update({ where: { talentId: existing.id }, data: { chargeRate, billingType } });
+          changes.push(["billing", diffFields("billing", before.talentBilling, { chargeRate, billingType })]);
+        }
 
         if (hasWorkPass) {
           const wpData: Record<string, unknown> = { workPassType: passTypeRaw };
           if (r.workPassIssuanceDate) wpData.passIssueDate = new Date(r.workPassIssuanceDate);
           if (r.workPassExpiryDate) wpData.passExpiry = new Date(r.workPassExpiryDate);
-          const existingWorkPass = await prisma.workPass.findUnique({ where: { talentId: existing.id } });
-          if (existingWorkPass) {
+          if (before.workPass) {
             await prisma.workPass.update({ where: { talentId: existing.id }, data: wpData });
+            changes.push(["workpass", diffFields("workpass", before.workPass, wpData)]);
           } else {
-            await prisma.workPass.create({
+            const createdPass = await prisma.workPass.create({
               data: {
                 talentId: existing.id,
                 passStatus: "Issued",
@@ -262,8 +283,12 @@ talentsRouter.post(
                 ...wpData,
               },
             });
+            changes.push(["workpass", diffFields("workpass", null, {
+              workPassType: createdPass.workPassType, passIssueDate: createdPass.passIssueDate, passExpiry: createdPass.passExpiry,
+            })]);
           }
         }
+        for (const [section, sectionChanges] of changes) await logChanges(existing.id, section, sectionChanges, logCtx);
         updated++;
       } else {
         const talent = await prisma.talent.create({
@@ -296,6 +321,7 @@ talentsRouter.post(
           });
         }
         await prisma.talentBilling.create({ data: { talentId: talent.id, chargeRate, billingType, invoiceStatus: "Pending" } });
+        await logChanges(talent.id, "talent", { action: "added" }, logCtx);
         created++;
       }
     }
@@ -314,6 +340,10 @@ talentsRouter.patch(
   asyncHandler(async (req, res) => {
     const id = Number(req.params.id);
     const b = req.body as Record<string, unknown>;
+    const before = await prisma.talent.findUniqueOrThrow({
+      where: { id },
+      include: { client: true, projectType: true, entity: true, caseOwner: true },
+    });
 
     const data: Record<string, unknown> = {};
     for (const key of ["firstName", "lastName", "nric", "sex", "nationality", "maritalStatus", "address", "contactNumber", "email", "bankAccount", "jobTitle", "workLocation"]) {
@@ -329,8 +359,7 @@ talentsRouter.patch(
       data.lastName = parts.length > 1 ? parts[parts.length - 1] : parts[0];
       data.firstName = parts.length > 1 ? parts.slice(0, -1).join(" ") : parts[0];
     } else if (data.firstName || data.lastName) {
-      const current = await prisma.talent.findUniqueOrThrow({ where: { id } });
-      data.name = `${data.firstName ?? current.firstName} ${data.lastName ?? current.lastName}`;
+      data.name = `${data.firstName ?? before.firstName} ${data.lastName ?? before.lastName}`;
     }
     if ("client" in b && typeof b.client === "string") data.clientId = (await upsertClientByName(b.client)).id;
     if ("projectType" in b && typeof b.projectType === "string") data.projectTypeId = (await upsertProjectTypeByName(b.projectType)).id;
@@ -338,9 +367,34 @@ talentsRouter.patch(
     if ("caseOwner" in b && typeof b.caseOwner === "string") data.caseOwnerId = (await upsertRecruiterByName(b.caseOwner)).id;
 
     await prisma.talent.update({ where: { id }, data });
+
+    // Compare lookups by name and skillset as a list, so the log reads the way the form does.
+    const beforeSnapshot: Record<string, unknown> = {
+      ...before,
+      client: before.client?.name,
+      projectType: before.projectType?.name,
+      entity: before.entity?.name,
+      caseOwner: before.caseOwner?.name,
+      skillset: parseSkillset(before.skillset),
+    };
+    const afterSnapshot: Record<string, unknown> = { ...data };
+    for (const key of ["client", "projectType", "entity", "caseOwner"]) {
+      if (typeof b[key] === "string") afterSnapshot[key] = b[key];
+    }
+    if ("skillset" in b) afterSnapshot.skillset = b.skillset;
+    await logChanges(id, "personal", diffFields("personal", beforeSnapshot, afterSnapshot), { userId: req.session.userId });
     res.json(await reserialize(id, req));
   })
 );
+
+function parseSkillset(raw: string | null): unknown {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+}
 
 async function writeRenewalEvent(
   entityType: string,
@@ -409,6 +463,7 @@ talentsRouter.patch(
 
     await prisma.contract.update({ where: { talentId: id }, data });
     await writeRenewalEvent("contract", String(id), req.session.userId, events);
+    await logChanges(id, "contract", diffFields("contract", current, data), { userId: req.session.userId });
     res.json(await reserialize(id, req));
   })
 );
@@ -420,14 +475,17 @@ talentsRouter.patch(
     const b = req.body as Record<string, unknown>;
     // "Not Applicable" means no work pass on file, the same as the import: drop the record.
     if (typeof b.workPassType === "string" && NO_WORK_PASS_MARKERS.has(b.workPassType.trim().toLowerCase())) {
+      const existingPass = await prisma.workPass.findUnique({ where: { talentId: id } });
       await prisma.workPass.deleteMany({ where: { talentId: id } });
+      if (existingPass) {
+        await logChanges(id, "workpass", [{ field: "Work pass type", fromValue: existingPass.workPassType, toValue: "Not Applicable" }], { userId: req.session.userId });
+      }
       return void res.json(await reserialize(id, req));
     }
 
     // Talents imported without a pass type have no work pass record yet; create one on first edit.
-    const current =
-      (await prisma.workPass.findUnique({ where: { talentId: id } })) ??
-      (await prisma.workPass.create({ data: { talentId: id } }));
+    const existingPass = await prisma.workPass.findUnique({ where: { talentId: id } });
+    const current = existingPass ?? (await prisma.workPass.create({ data: { talentId: id } }));
 
     const data: Record<string, unknown> = {};
     for (const key of ["workPassType", "passStatus", "medicalCheckupStatus", "medicalInsuranceStatus", "wicaCoverageStatus", "renewalStatus", "educationVerificationStatus", "passLifecycleStatus", "passRenewalRemarks"]) {
@@ -477,6 +535,11 @@ talentsRouter.patch(
 
     await prisma.workPass.update({ where: { talentId: id }, data });
     await writeRenewalEvent("workpass", String(id), req.session.userId, events);
+    // A pass created just now replaces "Not Applicable", so its type always shows as a change.
+    const passChanges = existingPass
+      ? diffFields("workpass", current, data)
+      : diffFields("workpass", { ...current, workPassType: "Not Applicable" }, { workPassType: current.workPassType, ...data });
+    await logChanges(id, "workpass", passChanges, { userId: req.session.userId });
     res.json(await reserialize(id, req));
   })
 );
@@ -532,6 +595,7 @@ talentsRouter.patch(
 
     await prisma.insurancePolicy.update({ where: { talentId: id }, data });
     await writeRenewalEvent("insurance", String(id), req.session.userId, events);
+    await logChanges(id, "insurance", diffFields("insurance", current, data), { userId: req.session.userId });
     res.json(await reserialize(id, req));
   })
 );
@@ -545,6 +609,7 @@ talentsRouter.post(
     if (current.contractRenewalStatus === "Not Started") data.contractRenewalStatus = "In Progress";
     await prisma.contract.update({ where: { talentId: id }, data });
     await writeRenewalEvent("contract", String(id), req.session.userId, [{ eventType: "NOTICE_SENT" }]);
+    await logChanges(id, "contract", diffFields("contract", current, data), { userId: req.session.userId });
     res.json(await reserialize(id, req));
   })
 );
@@ -558,6 +623,7 @@ talentsRouter.post(
     if (current.renewalStatus === "Not Started") data.renewalStatus = "In Progress";
     await prisma.workPass.update({ where: { talentId: id }, data });
     await writeRenewalEvent("workpass", String(id), req.session.userId, [{ eventType: "NOTICE_SENT" }]);
+    await logChanges(id, "workpass", diffFields("workpass", current, data), { userId: req.session.userId });
     res.json(await reserialize(id, req));
   })
 );
@@ -566,8 +632,11 @@ talentsRouter.post(
   "/:id/insurance/notice",
   asyncHandler(async (req, res) => {
     const id = Number(req.params.id);
-    await prisma.insurancePolicy.update({ where: { talentId: id }, data: { insuranceNoticeSent: true } });
+    const current = await prisma.insurancePolicy.findUniqueOrThrow({ where: { talentId: id } });
+    const data = { insuranceNoticeSent: true };
+    await prisma.insurancePolicy.update({ where: { talentId: id }, data });
     await writeRenewalEvent("insurance", String(id), req.session.userId, [{ eventType: "NOTICE_SENT" }]);
+    await logChanges(id, "insurance", diffFields("insurance", current, data), { userId: req.session.userId });
     res.json(await reserialize(id, req));
   })
 );
@@ -581,7 +650,9 @@ talentsRouter.patch(
     for (const key of ["salary", "cpf", "skillsDevelopmentLevy", "wica", "medicalInsuranceCost", "levy", "serviceFee", "allowances", "claimsReimbursements", "overtime", "noPayLeaveDeduction", "otherStatutoryCosts"]) {
       if (key in b) data[key] = Number(b[key]);
     }
+    const current = await prisma.payroll.findUnique({ where: { talentId: id } });
     await prisma.payroll.update({ where: { talentId: id }, data });
+    await logChanges(id, "payroll", diffFields("payroll", current, data), { userId: req.session.userId });
     res.json(await reserialize(id, req));
   })
 );
@@ -600,7 +671,9 @@ talentsRouter.patch(
     for (const key of ["talentInvoiceDate", "talentInvoiceDueDate", "talentInvoicePaidDate"]) {
       if (key in b) data[key] = b[key] ? new Date(b[key] as string) : null;
     }
+    const current = await prisma.talentBilling.findUnique({ where: { talentId: id } });
     await prisma.talentBilling.update({ where: { talentId: id }, data });
+    await logChanges(id, "billing", diffFields("billing", current, data), { userId: req.session.userId });
     res.json(await reserialize(id, req));
   })
 );
@@ -622,7 +695,9 @@ talentsRouter.patch(
     for (const key of ["submissionDate", "approvalDate", "timesheetMonth"]) {
       if (key in b) data[key] = b[key] ? new Date(b[key] as string) : null;
     }
+    const current = await prisma.leaveTimesheet.findUnique({ where: { talentId: id } });
     await prisma.leaveTimesheet.update({ where: { talentId: id }, data });
+    await logChanges(id, "leave", diffFields("leave", current, data), { userId: req.session.userId });
     res.json(await reserialize(id, req));
   })
 );
@@ -640,7 +715,9 @@ talentsRouter.patch(
       if (key in b) data[key] = b[key] ? new Date(b[key] as string) : null;
     }
     if ("offboardingChecklist" in b) data.offboardingChecklist = toJson(b.offboardingChecklist);
+    const current = await prisma.offboarding.findUnique({ where: { talentId: id } });
     await prisma.offboarding.update({ where: { talentId: id }, data });
+    await logChanges(id, "offboarding", diffFields("offboarding", current, data), { userId: req.session.userId });
     res.json(await reserialize(id, req));
   })
 );
@@ -651,8 +728,15 @@ talentsRouter.post(
     const id = Number(req.params.id);
     const lastWorkingDay = new Date();
     lastWorkingDay.setDate(lastWorkingDay.getDate() + 14);
-    await prisma.contract.update({ where: { talentId: id }, data: { contractEnd: lastWorkingDay, contractLifecycleStatus: "Notice Period" } });
+    const [contractBefore, offboardingBefore] = await Promise.all([
+      prisma.contract.findUnique({ where: { talentId: id } }),
+      prisma.offboarding.findUnique({ where: { talentId: id } }),
+    ]);
+    const contractData = { contractEnd: lastWorkingDay, contractLifecycleStatus: "Notice Period" };
+    await prisma.contract.update({ where: { talentId: id }, data: contractData });
     await prisma.offboarding.update({ where: { talentId: id }, data: { lastWorkingDay } });
+    await logChanges(id, "contract", diffFields("contract", contractBefore, contractData), { userId: req.session.userId });
+    await logChanges(id, "offboarding", diffFields("offboarding", offboardingBefore, { lastWorkingDay }), { userId: req.session.userId });
     res.json(await reserialize(id, req));
   })
 );
@@ -662,6 +746,7 @@ talentsRouter.delete(
   asyncHandler(async (req, res) => {
     const id = Number(req.params.id);
     await prisma.talent.update({ where: { id }, data: { active: false } });
+    await logChanges(id, "talent", { action: "removed" }, { userId: req.session.userId });
     res.status(204).end();
   })
 );

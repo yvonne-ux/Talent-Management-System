@@ -128,6 +128,16 @@ const api = {
     sendNotice: async (id) => normalizeRecordDates(await request(`/po/${id}/notice`, { method: "POST" })),
     setTalents: async (id, talentIds) => normalizeRecordDates(await request(`/po/${id}/talents`, { method: "PUT", body: JSON.stringify({ talentIds }) })),
   },
+  changes: {
+    list: ({ days, limit, talentId } = {}) => {
+      const params = new URLSearchParams();
+      if (days != null) params.set("days", days);
+      if (limit != null) params.set("limit", limit);
+      if (talentId != null) params.set("talentId", talentId);
+      const qs = params.toString();
+      return request(`/changes${qs ? `?${qs}` : ""}`);
+    },
+  },
   admin: {
     getSettings: () => request("/admin/settings"),
     updateSettings: (payload) => request("/admin/settings", { method: "PATCH", body: JSON.stringify(payload) }),

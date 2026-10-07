@@ -728,6 +728,7 @@ const LENS_GROUPS = {
     { view:'insurance', label:'Insurance' },
     { view:'finance', label:'Payroll & cost' },
     { view:'offboarding', label:'Offboarding' },
+    { view:'changes', label:'Recent changes' },
   ]},
   clients: { title: "Clients", nav: "clients", lenses: [
     { view:'clients', label:'Accounts' },
@@ -742,6 +743,7 @@ const LENS_SUBTITLES = {
   insurance: "Medical insurance policies and renewals for every talent",
   finance: "Payroll cost and gross profit for every talent",
   offboarding: "Talents leaving, with their exit checklist",
+  changes: "What changed on each talent, and on which day · newest first",
   clients: "All client accounts · click a client to view or edit details",
   sowpo: "Statement of Work and Purchase Order status by client and project",
   analytics: "Project performance by client, with a 3-month trend",
@@ -802,6 +804,7 @@ function switchView(view){
   if(view==='operations') renderOperations();
   if(view==='analytics') renderAnalytics();
   if(view==='offboarding') renderOffboarding();
+  if(view==='changes') renderChanges();
   if(view==='clients') renderClients();
   if(view==='sowpo') renderSowPoTracking();
   if(view==='renewals') renderRenewalCentre();
@@ -1897,6 +1900,7 @@ const returnViewLabels = {
   operations: "Back to Timesheet and Leave",
   offboarding: "Back to Talents · Offboarding",
   renewals: "Back to Renewals",
+  changes: "Back to Talents · Recent changes",
 };
 const returnViewToTab = {
   talents: "personal",
@@ -3167,7 +3171,161 @@ function renderHome(){
   renderHomeWeeksChart(items);
   renderHomeClientDonut();
   if(canViewFinancials) renderHomeMoney(revenue, cost, gp);
+  renderHomeChanges();
   updateNavBadges(items);
+}
+
+/* ---------- RECENT CHANGES ---------- */
+const CHANGE_SECTION_LABEL = {
+  personal:'Personal', contract:'Contract', workpass:'Work pass', insurance:'Insurance', payroll:'Payroll',
+  billing:'Billing', leave:'Leave', offboarding:'Offboarding',
+};
+// Badge colours follow the matching to-do kinds on Home.
+const CHANGE_SECTION_KIND = {
+  contract:'contract', workpass:'pass', insurance:'sow', payroll:'invoice', billing:'invoice', offboarding:'exit',
+};
+const CHANGE_KEY_DATE_FIELDS = new Set(["Contract start","Contract end","Work pass issue date","Work pass expiry","Policy expiry","Last working day","Passport expiry"]);
+const CHANGE_GROUP_WINDOW_MS = 60 * 1000;
+let changesCache = { days: 30, rows: [] };
+
+/* One edit usually touches several fields at once: fold consecutive field updates on the same
+   talent and section, by the same person, within a minute into one row. */
+function groupChanges(rows){
+  const groups = [];
+  rows.forEach(r=>{
+    const at = new Date(r.at);
+    const last = groups[groups.length-1];
+    if(r.action === 'updated' && last && last.action === 'updated' && last.talentId === r.talentId && last.section === r.section
+      && last.by === r.by && last.source === r.source && Math.abs(last.at - at) <= CHANGE_GROUP_WINDOW_MS){
+      last.lines.push(r);
+      return;
+    }
+    groups.push({ ...r, at, lines: r.action === 'updated' ? [r] : [] });
+  });
+  return groups;
+}
+
+function changeValueHtml(v){
+  if(v === null || v === undefined || v === '') return '<span class="blank">blank</span>';
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+  if(m) return escHtml(fmtDate(new Date(Number(m[1]), Number(m[2])-1, Number(m[3]))));
+  const text = v.length > 120 ? v.slice(0, 120) + '…' : v;
+  return escHtml(text);
+}
+
+function changeDayLabel(d){
+  const day = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const diff = Math.round((todayStart - day) / 86400000);
+  if(diff === 0) return 'Today';
+  if(diff === 1) return 'Yesterday';
+  return d.toLocaleDateString('en-SG', { weekday:'short', day:'numeric', month:'short', year:'numeric' });
+}
+
+function changeRowHtml(g, returnView){
+  const time = g.source === 'backfill' ? '' : g.at.toLocaleTimeString('en-SG', { hour:'2-digit', minute:'2-digit', hour12:false });
+  let badge;
+  if(g.action === 'added') badge = '<span class="todo-kind k-added">New talent</span>';
+  else if(g.action === 'removed') badge = '<span class="todo-kind k-removed">Removed</span>';
+  else badge = `<span class="todo-kind k-${CHANGE_SECTION_KIND[g.section] || 'neutral'}">${escHtml(CHANGE_SECTION_LABEL[g.section] || g.section)}</span>`;
+
+  const known = g.talentId != null && talents.some(t=>t.id === g.talentId);
+  const tab = g.section === 'talent' ? 'personal' : g.section;
+  const name = known
+    ? `<button type="button" class="link font-semibold text-sm text-left change-open" data-id="${g.talentId}" data-tab="${escHtml(tab)}" data-return="${returnView}">${escHtml(g.talentName)}</button>`
+    : `<span class="font-semibold text-sm">${escHtml(g.talentName)}</span>`;
+  const client = g.client ? `<span class="text-xs text-[var(--muted)]"> · ${escHtml(g.client)}</span>` : '';
+
+  let lines;
+  if(g.action === 'added'){
+    const text = g.source === 'backfill' ? 'Added to the system' : g.source === 'import' ? 'Added by Excel import' : 'Added';
+    lines = `<div class="change-line">${text}</div>`;
+  } else if(g.action === 'removed'){
+    lines = '<div class="change-line">Removed</div>';
+  } else {
+    lines = g.lines.map(l=>`<div class="change-line">${escHtml(l.field || '')}: ${changeValueHtml(l.from)} → ${changeValueHtml(l.to)}</div>`).join('');
+  }
+
+  const byParts = [];
+  if(g.by) byParts.push(escHtml(g.by));
+  if(g.source === 'import') byParts.push('via import');
+  return `<div class="change-row">
+    <span class="t">${time}</span>
+    ${badge}
+    <div class="body min-w-0"><div>${name}${client}</div>${lines}</div>
+    <span class="by">${byParts.join(' · ')}</span>
+  </div>`;
+}
+
+function changeGroupsHtml(groups, returnView){
+  let html = '';
+  let i = 0;
+  while(i < groups.length){
+    const label = changeDayLabel(groups[i].at);
+    let j = i;
+    while(j < groups.length && changeDayLabel(groups[j].at) === label) j++;
+    html += `<div class="todo-group">${label} <span class="cnt">${j - i}</span></div>`;
+    html += groups.slice(i, j).map(g=>changeRowHtml(g, returnView)).join('');
+    i = j;
+  }
+  return html;
+}
+
+function wireChangeLinks(el){
+  el.querySelectorAll('.change-open').forEach(btn=>{
+    btn.addEventListener('click', ()=>openTalentProfile(Number(btn.dataset.id), btn.dataset.return, btn.dataset.tab));
+  });
+}
+
+async function renderChanges(){
+  const kindSel = document.getElementById('changesKindFilter');
+  kindSel.querySelectorAll('option[data-financial]').forEach(o=>{ o.hidden = !canViewFinancials; o.disabled = !canViewFinancials; });
+  if(!canViewFinancials && kindSel.selectedOptions[0] && kindSel.selectedOptions[0].hasAttribute('data-financial')) kindSel.value = 'all';
+
+  // Refetched each time the view opens or the period changes, so edits made elsewhere show up.
+  const days = Number(document.getElementById('changesPeriodFilter').value) || 30;
+  try{
+    changesCache = { days, rows: await api.changes.list({ days, limit: 2000 }) };
+  }catch(err){
+    showToast(`Failed to load changes: ${err.message}`);
+    return;
+  }
+  renderChangesList();
+}
+
+function renderChangesList(){
+  const q = document.getElementById('changesSearchInput').value.trim().toLowerCase();
+  const kind = document.getElementById('changesKindFilter').value;
+  const rows = changesCache.rows.filter(r=>{
+    if(q && !(`${r.talentName} ${r.client || ''}`.toLowerCase().includes(q))) return false;
+    if(kind === 'all') return true;
+    if(kind === 'keydates') return CHANGE_KEY_DATE_FIELDS.has(r.field);
+    return r.section === kind;
+  });
+  const groups = groupChanges(rows);
+  const list = document.getElementById('changesList');
+  list.innerHTML = changeGroupsHtml(groups, 'changes');
+  wireChangeLinks(list);
+  document.getElementById('changesEmpty').classList.toggle('hidden', groups.length > 0);
+  const n = groups.length;
+  document.getElementById('changesCount').innerHTML = `<span class="font-semibold text-[var(--text)]">${n}</span> change${n===1?'':'s'} in the last ${changesCache.days} days`;
+}
+
+document.getElementById('changesSearchInput').addEventListener('input', renderChangesList);
+document.getElementById('changesKindFilter').addEventListener('change', renderChangesList);
+document.getElementById('changesPeriodFilter').addEventListener('change', renderChanges);
+
+async function renderHomeChanges(){
+  const el = document.getElementById('homeChanges');
+  try{
+    const rows = await api.changes.list({ days: 30, limit: 60 });
+    const groups = groupChanges(rows).slice(0, 6);
+    el.innerHTML = groups.length ? changeGroupsHtml(groups, 'home') : `<div class="px-4 pb-5 pt-2 text-sm text-[var(--muted)]">No changes in the last 30 days.</div>`;
+    wireChangeLinks(el);
+  }catch(err){
+    el.innerHTML = `<div class="px-4 pb-5 pt-2 text-sm text-[var(--muted)]">Couldn't load recent changes.</div>`;
+  }
 }
 
 /* ---------- WORK PASS ---------- */

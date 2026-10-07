@@ -413,3 +413,24 @@ model RenewalEvent {
 
   @@index([entityType, entityId])
 }
+
+// Human-readable edit history shown on the Recent changes view. Talent and client names are
+// copied in (no relation to Talent) so entries survive renames and removals.
+model ChangeLog {
+  id         String   @id @default(cuid())
+  talentId   Int?
+  talentName String
+  clientName String?
+  section    String   // talent | personal | contract | workpass | insurance | payroll | billing | leave | offboarding
+  action     String   // added | updated | removed
+  field      String?  // human label, e.g. "Contract end"
+  fromValue  String?
+  toValue    String?
+  source     String   @default("manual") // manual | import | backfill
+  userId     String?
+  userName   String?
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([talentId])
+}
