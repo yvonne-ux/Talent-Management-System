@@ -1550,6 +1550,19 @@ document.getElementById('confirmImportBtn').addEventListener('click', async ()=>
   }
 });
 
+// Blank import templates, so users don't need a copy of the sheet from someone else.
+// Every header here must stay a key of the matching *_IMPORT_HEADER_MAP.
+const TALENT_TEMPLATE_HEADERS = ['Name', 'Position', 'Basic Salary', 'CPF', 'Levy', 'Insurance Cost', 'SDL', 'WICA (1%)', 'Total Employment Cost', 'Service Fee', 'Monthly Charge Rate', 'FIN No.', 'Type of Pass', 'Entity', 'Work Pass Issuance Date', 'Work Pass Expiry Date', 'Contract Start Date', 'Contract End Date', 'Hiring Name', 'Verifier Email Address', 'Dept', 'Quotation Number', 'PO Number', 'Owner'];
+const CLIENT_TEMPLATE_HEADERS = ['Name', 'Industry', 'Contact Person', 'Contact Email', 'Contact Number', 'Account Manager', 'Status'];
+function downloadBlankTemplate(headers, sheetName, fileName){
+  const ws = XLSX.utils.aoa_to_sheet([headers]);
+  ws['!cols'] = headers.map(h => ({ wch: Math.max(12, h.length + 2) }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  XLSX.writeFile(wb, fileName);
+}
+document.getElementById('downloadTalentTemplateBtn').addEventListener('click', ()=>downloadBlankTemplate(TALENT_TEMPLATE_HEADERS, 'Talents', 'talents-import.xlsx'));
+
 /* ---------- Import Cost Changes Modal ----------
    Dated changes to salary, cost items and charge rate for talents already in the system
    (e.g. an increment from 1 Jan, a new charge rate from 1 Apr). The file is parsed here, then
@@ -1799,6 +1812,7 @@ const CLIENT_IMPORT_HEADER_MAP = {
   'account manager': 'accountManager',
   status: 'status',
 };
+document.getElementById('downloadClientTemplateBtn').addEventListener('click', ()=>downloadBlankTemplate(CLIENT_TEMPLATE_HEADERS, 'Clients', 'clients-import.xlsx'));
 
 function parseClientImportWorkbook(workbook){
   const sheetName = workbook.SheetNames[0];
