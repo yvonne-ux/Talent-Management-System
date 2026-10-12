@@ -15,6 +15,7 @@ const talentWithRelations = Prisma.validator<Prisma.TalentDefaultArgs>()({
     talentBilling: true,
     leaveTimesheet: true,
     offboarding: true,
+    salaryChanges: { orderBy: { effectiveDate: "desc" } },
   },
 });
 export type TalentWithRelations = Prisma.TalentGetPayload<typeof talentWithRelations>;
@@ -142,6 +143,14 @@ export function serializeTalent(t: TalentWithRelations, canViewFinancials = true
     overtime: t.payroll?.overtime ?? 0,
     noPayLeaveDeduction: t.payroll?.noPayLeaveDeduction ?? 0,
     otherStatutoryCosts: t.payroll?.otherStatutoryCosts ?? 0,
+    // Salary changes already in effect (newest first), and one waiting for its effective date.
+    salaryHistory: t.salaryChanges
+      .filter((s) => s.appliedAt)
+      .map((s) => ({ fromSalary: s.fromSalary, toSalary: s.toSalary, effectiveDate: s.effectiveDate })),
+    pendingSalary: (() => {
+      const p = t.salaryChanges.find((s) => !s.appliedAt);
+      return p ? { toSalary: p.toSalary, effectiveDate: p.effectiveDate, remarks: p.remarks } : null;
+    })(),
 
     // Talent Billing
     chargeRate: t.talentBilling?.chargeRate ?? 0,
@@ -198,6 +207,8 @@ export function serializeTalent(t: TalentWithRelations, canViewFinancials = true
   if (!canViewFinancials) {
     for (const key of PAYROLL_FIELDS) (result as Record<string, unknown>)[key] = null;
     for (const key of BILLING_FIELDS) (result as Record<string, unknown>)[key] = null;
+    (result as Record<string, unknown>).salaryHistory = [];
+    (result as Record<string, unknown>).pendingSalary = null;
   }
 
   return result;

@@ -210,6 +210,11 @@
     background:#fff; border-radius:12px; width:min(560px,92vw); max-height:88vh; overflow-y:auto;
     box-shadow:0 20px 60px rgba(0,0,0,0.25); opacity:0; pointer-events:none; transition:opacity .18s ease, transform .18s ease; }
   .modal-card.open{ opacity:1; pointer-events:auto; transform:translate(-50%,-50%); }
+  .modal-card.modal-wide{ width:min(780px,94vw); }
+  .ru-alert{ border-color:var(--red-dot) !important; background:var(--red-bg) !important; color:var(--red-text); }
+  .ru-section > summary{ list-style:none; }
+  .ru-section > summary::-webkit-details-marker{ display:none; }
+  .ru-section[open] .ru-chev{ transform:rotate(90deg); }
 
   .slideover{ position:fixed; top:0; right:0; height:100%; width:min(420px,92vw); background:#fff; z-index:50;
     box-shadow:-8px 0 30px rgba(0,0,0,0.15); transform:translateX(100%); transition:transform .22s ease; overflow-y:auto; }
@@ -2327,17 +2332,20 @@
   </form>
 </div>
 
-<!-- Renewal Centre: Update Status Modal (Contract Renewals tab) -->
+<!-- Renewal Centre: Update Status Modal (all renewal tabs) -->
 <div id="renewalUpdateModalOverlay" class="overlay"></div>
 <div id="renewalUpdateModal" class="modal-card">
   <div class="flex items-center justify-between px-6 py-4 border-b border-[var(--border)]">
     <div>
-      <h2 class="text-lg font-bold">Update Renewal Details</h2>
+      <h2 class="text-lg font-bold" id="renewalUpdateModalTitle">Update Renewal Details</h2>
       <p class="text-xs text-[var(--muted)]" id="renewalUpdateModalSub">—</p>
     </div>
     <button id="closeRenewalUpdateModal" class="icon-btn"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
   </div>
   <form id="renewalUpdateForm" class="px-6 py-5 space-y-4">
+    <!-- Talent renewals (contract, work pass, insurance): concerns in red plus every editable detail, filled by app.js -->
+    <div id="ru_talentFields" class="hidden space-y-3"></div>
+    <div id="ru_simpleFields" class="space-y-4">
     <div>
       <label class="field-label" id="ru_startLabel">Date of Commencement</label>
       <input id="ru_startDate" type="date" class="filter-input" required />
@@ -2353,6 +2361,7 @@
     <div id="ru_remarksWrap">
       <label class="field-label">Remarks</label>
       <textarea id="ru_remarks" rows="3" class="filter-input" placeholder="Note any extenuating circumstances..."></textarea>
+    </div>
     </div>
     <div class="flex justify-end gap-2 pt-2">
       <button type="button" id="cancelRenewalUpdateModal" class="btn-secondary rounded-md px-4 py-2 text-sm font-medium">Cancel</button>

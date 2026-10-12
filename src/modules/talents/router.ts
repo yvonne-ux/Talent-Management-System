@@ -9,6 +9,7 @@ import { nextRenewalSeq, isExpiryWithinRenewalWindow } from "../../lib/renewalRu
 import { canViewFinancialsForRequest } from "../../lib/permissions";
 import { isCpfEligible } from "../../lib/computed";
 import { diffFields, logChanges, FieldChange } from "../../lib/changeLog";
+import { applyDueSalaryChanges, recordSalaryChange } from "../../lib/salaryChanges";
 
 export const talentsRouter = Router();
 talentsRouter.use(requireAuth);
@@ -17,6 +18,7 @@ talentsRouter.get(
   "/",
   asyncHandler(async (req, res) => {
     const includeInactive = req.query.includeInactive === "true";
+    await applyDueSalaryChanges();
     const talents = await prisma.talent.findMany({
       where: includeInactive ? {} : { active: true },
       include: talentInclude,
@@ -31,6 +33,7 @@ talentsRouter.get(
   "/:id",
   asyncHandler(async (req, res) => {
     const id = Number(req.params.id);
+    await applyDueSalaryChanges();
     const talent = await prisma.talent.findUnique({ where: { id }, include: talentInclude });
     if (!talent) return void res.status(404).json({ error: "Talent not found" });
     res.json(serializeTalent(talent, await canViewFinancialsForRequest(req)));
@@ -660,7 +663,32 @@ talentsRouter.patch(
     }
     const current = await prisma.payroll.findUnique({ where: { talentId: id } });
     await prisma.payroll.update({ where: { talentId: id }, data });
+    // Keep the salary history complete: a direct edit is a change effective today.
+    if ("salary" in data && current && data.salary !== current.salary) {
+      await prisma.salaryChange.create({
+        data: { talentId: id, fromSalary: current.salary, toSalary: data.salary as number, effectiveDate: new Date(), appliedAt: new Date(), userId: req.session.userId },
+      });
+    }
     await logChanges(id, "payroll", diffFields("payroll", current, data), { userId: req.session.userId });
+    res.json(await reserialize(id, req));
+  })
+);
+
+// Salary change with an effective date (e.g. an increment that starts with a renewed contract).
+talentsRouter.post(
+  "/:id/salary-change",
+  asyncHandler(async (req, res) => {
+    if (!(await canViewFinancialsForRequest(req))) return void res.status(403).json({ error: "Not allowed to change salary" });
+    const id = Number(req.params.id);
+    const b = req.body as Record<string, unknown>;
+    const salary = Number(b.salary);
+    const effectiveDate = b.effectiveDate ? new Date(b.effectiveDate as string) : new Date();
+    if (!Number.isFinite(salary) || salary < 0) return void res.status(400).json({ error: "Salary must be a number" });
+    if (Number.isNaN(effectiveDate.getTime())) return void res.status(400).json({ error: "Effective date is not a valid date" });
+    await recordSalaryChange(id, salary, effectiveDate, {
+      userId: req.session.userId,
+      remarks: typeof b.remarks === "string" && b.remarks.trim() ? b.remarks.trim() : null,
+    });
     res.json(await reserialize(id, req));
   })
 );

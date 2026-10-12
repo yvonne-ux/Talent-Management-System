@@ -2289,6 +2289,9 @@ function renderTalentProfile(c){
   /* ----- Payroll & Cost tab (breakdown, read-only) ----- */
   document.getElementById('profileFinancials').innerHTML = [
     dlRow("Salary (Monthly)", c.salary ? fmtMoney(c.salary) : '-'),
+    ...(c.pendingSalary ? [dlRow("Scheduled Salary Change", `<span style="color:var(--amber-text)">${fmtMoney(c.pendingSalary.toSalary)} from ${fmtDate(c.pendingSalary.effectiveDate)}</span>`)] : []),
+    ...((c.salaryHistory || []).length ? [dlRow("Salary History", (c.salaryHistory || []).slice(0, 5).map(h=>
+      `<div class="font-normal text-xs">${fmtDate(h.effectiveDate)}: ${h.fromSalary === null ? '-' : fmtMoney(h.fromSalary)} → ${fmtMoney(h.toSalary)}</div>`).join(''))] : []),
     dlRow("Charge Rate", chargeRateLabel(c)),
     dlRow("Contract Start", fmtDate(c.contractStart)),
     dlRow("Contract End", `<span class="${contractAlert?'date-alert':''}">${fmtDate(c.contractEnd)}${contractAlert?` (${c.contractDaysLeft}d)`:''}</span>`),
@@ -5797,6 +5800,246 @@ const sowPoStatusOptionPairs = [
   { value: "Completed", label: "Completed" },
 ];
 
+/* ----- Talent renewals: one panel for the renewal plus every other detail of the talent ----- */
+// Red-flag threshold matches the "Requires Renewal" bucket; renewal work is expected from 90 days out.
+const RU_URGENT_DAYS = 45;
+const RU_RENEWAL_WINDOW_DAYS = 90;
+let ruFields = [];        // field definitions currently rendered in the talent panel
+let ruInitial = {};       // their starting values, so Save only sends what changed
+let ruEffectiveTouched = false;
+
+function ruDaysText(days){
+  return days < 0 ? `expired ${Math.abs(days)}d ago` : `expires in ${days}d`;
+}
+/* What needs attention on this talent, keyed by field. Each entry is the red note under that field. */
+function renewalConcerns(c){
+  const out = {};
+  const contractActive = !["Notice Period","Inactive"].includes(c.contractLifecycleStatus);
+  if(c.contractEnd && contractActive){
+    if(isContractRenewalStale(c)){
+      out.contractStart = "Renewal is Completed but the contract dates were not updated";
+      out.contractEnd = "Renewal is Completed but the contract dates were not updated";
+    } else if(c.contractDaysLeft <= RU_URGENT_DAYS){
+      out.contractEnd = `Contract ${ruDaysText(c.contractDaysLeft)}`;
+    }
+    if(c.contractDaysLeft <= RU_RENEWAL_WINDOW_DAYS && c.contractRenewalStatus !== "Completed"){
+      out.contractRenewalStatus = `Contract renewal ${renewalStatusDisplayLabel(c.contractRenewalStatus || "Not Started").toLowerCase()}`;
+    }
+  }
+  const foreignPass = c.workPassType && !["Singapore Citizen","PR"].includes(c.workPassType) && c.passLifecycleStatus !== "Inactive";
+  if(foreignPass){
+    if(!c.passExpiry){
+      out.passExpiry = "No work pass expiry date on file";
+    } else if(isPassRenewalStale(c)){
+      out.passIssueDate = "Renewal is Completed but the pass dates were not updated";
+      out.passExpiry = "Renewal is Completed but the pass dates were not updated";
+    } else if(c.passDaysLeft <= RU_URGENT_DAYS){
+      out.passExpiry = `Work pass ${ruDaysText(c.passDaysLeft)}`;
+    }
+    if(c.passExpiry && c.passDaysLeft <= RU_RENEWAL_WINDOW_DAYS && c.renewalStatus !== "Completed"){
+      out.renewalStatus = `Work pass renewal ${renewalStatusDisplayLabel(c.renewalStatus || "Not Started").toLowerCase()}`;
+    }
+  }
+  if(c.policyType && c.policyType !== "Not Required"){
+    if(!c.policyExpiry){
+      out.policyExpiry = "No policy expiry date on file";
+    } else if(isPolicyRenewalStale(c)){
+      out.policyIssueDate = "Renewal is Completed but the policy dates were not updated";
+      out.policyExpiry = "Renewal is Completed but the policy dates were not updated";
+    } else if(c.policyDaysLeft <= RU_URGENT_DAYS){
+      out.policyExpiry = `Insurance ${ruDaysText(c.policyDaysLeft)}`;
+    }
+    if(c.policyExpiry && c.policyDaysLeft <= RU_RENEWAL_WINDOW_DAYS && c.policyRenewalStatus !== "Completed"){
+      out.policyRenewalStatus = `Insurance renewal ${renewalStatusDisplayLabel(c.policyRenewalStatus || "Not Started").toLowerCase()}`;
+    }
+  }
+  if(canViewFinancials){
+    if(!c.salary) out.newSalary = "No salary on file";
+    if(!c.chargeRate) out.chargeRate = "No charge rate on file";
+  }
+  return out;
+}
+
+/* Every editable field, grouped by the section (and API) it saves through. */
+function renewalTalentSections(c, type){
+  const renewalSelect = ["Not Started","In Progress","Completed"];
+  const contract = [
+    { key:"contractStart", label:"Date of Commencement", kind:"date", value:c.contractStart, required:true },
+    { key:"contractEnd", label:"Date of Expiry", kind:"date", value:c.contractEnd, required:true },
+    { key:"contractRenewalStatus", label:"Renewal Status", kind:"select", options:renewalStatusOptionPairs, value:c.contractRenewalStatus },
+    { key:"renewalRemarks", label:"Renewal Remarks", kind:"textarea", value:c.renewalRemarks },
+    { key:"contractStatus", label:"Contract Status", kind:"select", options:contractStatusOptions, value:c.contractStatus },
+    { key:"noticePeriod", label:"Notice Period", kind:"select", options:noticePeriods, value:c.noticePeriod },
+    { key:"contractUpload", label:"Contract Upload", kind:"select", options:uploadStatuses, value:c.contractUpload },
+    { key:"signedContractUpload", label:"Signed Contract Upload", kind:"select", options:signedUploadStatuses, value:c.signedContractUpload },
+    { key:"contractLifecycleStatus", label:"Status Override", kind:"select", options:[{value:"",label:"Automatic (based on expiry date)"},{value:"Notice Period",label:"Notice Period"},{value:"Inactive",label:"Inactive"}], value:c.contractLifecycleStatus || "" },
+    { key:"remarks", label:"Contract Remarks", kind:"textarea", value:c.remarks },
+  ];
+  const workpass = [
+    { key:"workPassType", label:"Work Pass", kind:"select", options:[...workPassTypes, "Not Applicable"], value:c.workPassType || "Not Applicable" },
+    { key:"passIssueDate", label:"Date of Issue", kind:"date", value:c.passIssueDate, nullable:true },
+    { key:"passExpiry", label:"Date of Expiry", kind:"date", value:c.passExpiry, nullable:true },
+    { key:"renewalStatus", label:"Renewal Status", kind:"select", options:renewalStatusOptionPairs, value:c.renewalStatus },
+    { key:"passRenewalRemarks", label:"Renewal Remarks", kind:"textarea", value:c.passRenewalRemarks },
+    { key:"passStatus", label:"Pass Status", kind:"select", options:passStatusOptions, value:c.passStatus },
+  ];
+  const insurance = [
+    { key:"policyType", label:"Type of Policy", kind:"select", options:["Policy 1","Policy 2A","Not Required"], value:c.policyType },
+    { key:"policyIssueDate", label:"Date of Issue", kind:"date", value:c.policyIssueDate, nullable:true },
+    { key:"policyExpiry", label:"Date of Expiry", kind:"date", value:c.policyExpiry, nullable:true },
+    { key:"policyRenewalStatus", label:"Renewal Status", kind:"select", options:renewalStatusOptionPairs, value:c.policyRenewalStatus },
+    { key:"policyRemarks", label:"Remarks", kind:"textarea", value:c.policyRemarks },
+  ];
+  const pay = [
+    { key:"newSalary", label:"New Monthly Salary (S$)", kind:"number", value:"", placeholder: c.salary ? `Now ${fmtMoney(c.salary)}` : "No salary on file" },
+    { key:"salaryEffectiveDate", label:"Salary Effective From", kind:"date", value: type === 'contract' ? c.contractStart : today, nullable:true },
+    { key:"billingType", label:"Billing Type", kind:"select", options:billingTypes, value:c.billingType },
+    { key:"chargeRate", label:"Charge Rate (S$)", kind:"number", value:c.chargeRate },
+  ];
+  const personal = [
+    { key:"name", label:"Full Name", kind:"text", value:c.name },
+    { key:"nric", label:"NRIC / FIN", kind:"text", value:c.nric },
+    { key:"jobTitle", label:"Job Title", kind:"text", value:c.jobTitle },
+    { key:"dateOfBirth", label:"Date of Birth", kind:"date", value:c.dateOfBirth, nullable:true },
+    { key:"nationality", label:"Nationality", kind:"select", options:nationalities, value:c.nationality },
+    { key:"maritalStatus", label:"Marital Status", kind:"select", options:maritalStatuses, value:c.maritalStatus },
+    { key:"dependants", label:"Dependants", kind:"number", value:c.dependants },
+    { key:"contactNumber", label:"Contact Number", kind:"text", value:c.contactNumber },
+    { key:"email", label:"Email Address", kind:"text", value:c.email },
+    { key:"address", label:"Residential Address", kind:"text", value:c.address, wide:true },
+    { key:"bankAccount", label:"Bank Account Number", kind:"text", value:c.bankAccount },
+  ];
+  const sections = [
+    { id:"contract", title:"Contract", fields:contract },
+    { id:"workpass", title:"Work Pass", fields:workpass },
+    { id:"insurance", title:"Insurance", fields:insurance },
+    ...(canViewFinancials ? [{ id:"pay", title:"Salary and Charge Rate", fields:pay }] : []),
+    { id:"personal", title:"Personal and Contact", fields:personal },
+  ];
+  // The section the Update Status button came from goes first and starts open.
+  const first = sections.findIndex(s=>s.id === type);
+  if(first > 0) sections.unshift(sections.splice(first, 1)[0]);
+  return sections;
+}
+
+function ruFieldValue(f){
+  if(f.kind === "date") return f.value ? toISO(f.value) : "";
+  if(f.value === null || f.value === undefined) return "";
+  return String(f.value);
+}
+function ruFieldHtml(f, concern){
+  const id = `ru_f_${f.key}`;
+  const alertCls = concern ? "ru-alert" : "";
+  const val = ruFieldValue(f).replace(/"/g,'&quot;');
+  let input;
+  if(f.kind === "select"){
+    const pairs = f.options.map(o=> typeof o === "string" ? {value:o, label:o} : o);
+    const known = pairs.some(p=>p.value === val);
+    const extra = !known ? `<option value="${val}" selected>${val || '-'}</option>` : '';
+    input = `<select id="${id}" class="select-basic ${alertCls}">${extra}${pairs.map(p=>`<option value="${p.value}" ${p.value===val?'selected':''}>${p.label}</option>`).join('')}</select>`;
+  } else if(f.kind === "textarea"){
+    input = `<textarea id="${id}" rows="2" class="filter-input ${alertCls}">${ruFieldValue(f).replace(/</g,'&lt;')}</textarea>`;
+  } else {
+    const t = f.kind === "number" ? `number" min="0" step="any` : f.kind;
+    input = `<input id="${id}" type="${t}" class="filter-input ${alertCls}" value="${val}" ${f.placeholder?`placeholder="${f.placeholder}"`:''} ${f.required?'required':''} />`;
+  }
+  return `<div class="${f.kind === 'textarea' || f.wide ? 'sm:col-span-2' : ''}">
+    <label class="field-label ${concern?'!text-[var(--red-text)]':''}" for="${id}">${f.label}</label>
+    ${input}
+    ${concern ? `<div class="text-[11px] mt-1 font-medium" style="color:var(--red-text)">${concern}</div>` : ''}
+  </div>`;
+}
+
+function renderRenewalTalentPanel(c, type){
+  const concerns = renewalConcerns(c);
+  const sections = renewalTalentSections(c, type);
+  ruFields = sections.flatMap(s=>s.fields.map(f=>({ ...f, section:s.id })));
+  ruInitial = Object.fromEntries(ruFields.map(f=>[f.key, ruFieldValue(f)]));
+  ruEffectiveTouched = false;
+
+  const concernList = Object.entries(concerns);
+  const summary = concernList.length
+    ? `<div class="rounded-lg border px-4 py-3 text-sm" style="border-color:var(--red-dot);background:var(--red-bg);color:var(--red-text)">
+        <div class="font-semibold mb-1">Needs attention</div>
+        <ul class="list-disc pl-5 space-y-0.5">${[...new Set(concernList.map(([,msg])=>msg))].map(msg=>`<li>${msg}</li>`).join('')}</ul>
+      </div>`
+    : `<div class="rounded-lg px-4 py-3 text-sm" style="background:var(--green-bg);color:var(--green-text)">Nothing needs attention for ${c.name} right now.</div>`;
+
+  const pending = c.pendingSalary
+    ? `<div class="sm:col-span-2 text-xs rounded-md px-3 py-2" style="background:var(--amber-bg);color:var(--amber-text)">Scheduled: salary changes to ${fmtMoney(c.pendingSalary.toSalary)} from ${fmtDate(c.pendingSalary.effectiveDate)}. A new salary below replaces this.</div>`
+    : '';
+
+  document.getElementById('ru_talentFields').innerHTML = summary + sections.map((s, i)=>{
+    const sectionConcerns = s.fields.filter(f=>concerns[f.key]).length;
+    const open = i === 0 || sectionConcerns > 0;
+    return `<details class="ru-section border border-[var(--border)] rounded-lg" ${open?'open':''}>
+      <summary class="cursor-pointer select-none px-4 py-2.5 text-sm font-semibold flex items-center justify-between">
+        <span><span class="ru-chev inline-block text-[var(--muted)] mr-1.5">▸</span>${s.title}${i === 0 ? ' <span class="text-xs font-normal text-[var(--muted)]">· renewal</span>' : ''}</span>
+        ${sectionConcerns ? `<span class="pill" style="background:var(--red-bg);color:var(--red-text)">${sectionConcerns} to check</span>` : ''}
+      </summary>
+      <div class="px-4 pb-4 pt-1 grid grid-cols-1 sm:grid-cols-2 gap-3">
+        ${s.id === 'pay' ? `<div class="sm:col-span-2 text-xs text-[var(--muted)]">Current salary: <span class="font-semibold text-[var(--text)]">${c.salary ? fmtMoney(c.salary) : '-'}</span>. Leave New Monthly Salary blank to keep it.</div>${pending}` : ''}
+        ${s.fields.map(f=>ruFieldHtml(f, concerns[f.key])).join('')}
+      </div>
+    </details>`;
+  }).join('');
+
+  // Clear the red as soon as a flagged field is edited.
+  document.querySelectorAll('#ru_talentFields .ru-alert').forEach(el=>{
+    el.addEventListener('input', ()=> el.classList.remove('ru-alert'));
+    el.addEventListener('change', ()=> el.classList.remove('ru-alert'));
+  });
+  // A salary increment usually starts with the renewed contract: follow the new commencement
+  // date until the effective date is set by hand.
+  const eff = document.getElementById('ru_f_salaryEffectiveDate');
+  const start = document.getElementById('ru_f_contractStart');
+  if(eff){
+    eff.addEventListener('input', ()=>{ ruEffectiveTouched = true; });
+    if(start) start.addEventListener('change', ()=>{ if(!ruEffectiveTouched && type === 'contract') eff.value = start.value; });
+  }
+}
+
+function ruChanged(section){
+  const out = {};
+  for(const f of ruFields){
+    if(f.section !== section) continue;
+    const el = document.getElementById(`ru_f_${f.key}`);
+    if(!el) continue;
+    const v = f.kind === "textarea" || f.kind === "text" ? el.value.trim() : el.value;
+    if(v === ruInitial[f.key]) continue;
+    if(f.kind === "number") out[f.key] = v === "" ? null : Number(v);
+    else if(f.kind === "date") out[f.key] = v || null;
+    else out[f.key] = v;
+  }
+  return out;
+}
+
+async function saveRenewalTalentPanel(c){
+  const contract = ruChanged('contract');
+  const workpass = ruChanged('workpass');
+  const insurance = ruChanged('insurance');
+  const personal = ruChanged('personal');
+  const pay = canViewFinancials ? ruChanged('pay') : {};
+  const newSalary = document.getElementById('ru_f_newSalary')?.value ?? "";
+  const effective = document.getElementById('ru_f_salaryEffectiveDate')?.value ?? "";
+  if(newSalary !== "" && !effective) throw new Error("Pick the date the new salary takes effect");
+
+  let updated = null;
+  if(Object.keys(personal).length){
+    if(personal.name === "") delete personal.name;
+    updated = await api.talents.updatePersonal(c.id, personal);
+  }
+  if(Object.keys(contract).length) updated = await api.talents.updateContract(c.id, contract);
+  if(Object.keys(workpass).length) updated = await api.talents.updateWorkPass(c.id, workpass);
+  if(Object.keys(insurance).length) updated = await api.talents.updateInsurance(c.id, insurance);
+  const billing = {};
+  if("billingType" in pay) billing.billingType = pay.billingType;
+  if("chargeRate" in pay) billing.chargeRate = pay.chargeRate ?? 0;
+  if(Object.keys(billing).length) updated = await api.talents.updateBilling(c.id, billing);
+  if(newSalary !== "") updated = await api.talents.recordSalaryChange(c.id, { salary: Number(newSalary), effectiveDate: effective });
+  return updated;
+}
+
 function openRenewalUpdateModal(id, type){
   const isSow = type === 'sow';
   const isPo = type === 'po';
@@ -5814,6 +6057,7 @@ function openRenewalUpdateModal(id, type){
     const sel = document.getElementById('ru_renewalStatus');
     sel.innerHTML = sowPoStatusOptionPairs.map(p=>`<option value="${p.value}" ${p.value===statusValue?'selected':''}>${p.label}</option>`).join('');
     document.getElementById('ru_remarks').value = r.remarks || '';
+    showRenewalUpdateLayout(false);
     renewalUpdateModalOverlay.classList.add('open');
     renewalUpdateModal.classList.add('open');
     return;
@@ -5824,19 +6068,22 @@ function openRenewalUpdateModal(id, type){
   editingRenewalUpdateId = id;
   editingRenewalUpdateType = type;
   document.getElementById('renewalUpdateModalSub').textContent = `${c.name} · ${c.client}`;
-
-  const isWorkpass = type === 'workpass';
-  const isInsurance = type === 'insurance';
-  document.getElementById('ru_startLabel').textContent = isWorkpass ? "Date of Issue" : (isInsurance ? "Date of Issue" : "Date of Commencement");
-  document.getElementById('ru_startDate').value = toISO(isInsurance ? c.policyIssueDate : (isWorkpass ? c.passIssueDate : c.contractStart));
-  document.getElementById('ru_endDate').value = toISO(isInsurance ? c.policyExpiry : (isWorkpass ? c.passExpiry : c.contractEnd));
-  const statusValue = isInsurance ? c.policyRenewalStatus : (isWorkpass ? c.renewalStatus : c.contractRenewalStatus);
-  const sel = document.getElementById('ru_renewalStatus');
-  sel.innerHTML = renewalStatusOptionPairs.map(p=>`<option value="${p.value}" ${p.value===statusValue?'selected':''}>${p.label}</option>`).join('');
-  document.getElementById('ru_remarks').value = (isInsurance ? c.policyRemarks : (isWorkpass ? c.passRenewalRemarks : c.renewalRemarks)) || '';
+  renderRenewalTalentPanel(c, type);
+  showRenewalUpdateLayout(true);
 
   renewalUpdateModalOverlay.classList.add('open');
   renewalUpdateModal.classList.add('open');
+}
+/* Talent renewals get the full panel; SOW and PO keep the short dates + status form. */
+function showRenewalUpdateLayout(isTalent){
+  document.getElementById('renewalUpdateModalTitle').textContent = isTalent ? "Update Status and Details" : "Update Renewal Details";
+  document.getElementById('ru_talentFields').classList.toggle('hidden', !isTalent);
+  document.getElementById('ru_simpleFields').classList.toggle('hidden', isTalent);
+  renewalUpdateModal.classList.toggle('modal-wide', isTalent);
+  // Hidden inputs must not block the submit with "required".
+  document.getElementById('ru_startDate').required = !isTalent;
+  document.getElementById('ru_endDate').required = !isTalent;
+  if(!isTalent) document.getElementById('ru_talentFields').innerHTML = '';
 }
 function closeRenewalUpdateModalFn(){
   renewalUpdateModalOverlay.classList.remove('open');
@@ -5881,36 +6128,27 @@ document.getElementById('renewalUpdateForm').addEventListener('submit', async e=
 
   const c = talents.find(x=>x.id === editingRenewalUpdateId);
   if(!c) return;
-  const isWorkpass = editingRenewalUpdateType === 'workpass';
-  const isInsurance = editingRenewalUpdateType === 'insurance';
-  const remarks = document.getElementById('ru_remarks').value.trim();
 
   try{
-    let updated;
-    if(isInsurance){
-      updated = await api.talents.updateInsurance(c.id, {
-        policyIssueDate: newStartVal, policyExpiry: newEndVal, policyRenewalStatus: newStatus, policyRemarks: remarks,
-      });
-    } else if(isWorkpass){
-      updated = await api.talents.updateWorkPass(c.id, {
-        passIssueDate: newStartVal, passExpiry: newEndVal, renewalStatus: newStatus, passRenewalRemarks: remarks,
-      });
-    } else {
-      updated = await api.talents.updateContract(c.id, {
-        contractStart: newStartVal, contractEnd: newEndVal, contractRenewalStatus: newStatus, renewalRemarks: remarks,
-      });
-    }
+    const updated = await saveRenewalTalentPanel(c);
+    closeRenewalUpdateModalFn();
+    if(!updated){ showToast(`No changes to save for ${c.name}`, null); return; }
     Object.assign(c, updated);
     computeDerived(c);
-    closeRenewalUpdateModalFn();
-    if(isInsurance){ renderPolicyTable(); }
-    else if(isWorkpass){ renderRenewalWorkpass(); renderWorkPass(); }
-    else { renderRenewalContract(); renderContracts(); }
+    // Any section may have changed, so refresh every list this talent appears in.
+    refreshPassTypeFilters();
+    renderPolicyTable();
+    renderRenewalWorkpass(); renderWorkPass();
+    renderRenewalContract(); renderContracts();
+    renderFinance();
     renderStats();
+    renderTable();
     refreshProfileIfOpen(c);
-    showToast(`${c.name}'s renewal details updated`, checkIcon);
+    showToast(`${c.name}'s details updated`, checkIcon);
   }catch(err){
-    showToast(`Failed to update renewal details: ${err.message}`, null);
+    // Sections save one by one, so some may have gone through: reload the talent before the user retries.
+    try{ Object.assign(c, await api.talents.get(c.id)); computeDerived(c); renderRenewalTalentPanel(c, editingRenewalUpdateType); }catch(_){}
+    showToast(`Failed to update ${c.name}: ${err.message}`, null);
   }
 });
 

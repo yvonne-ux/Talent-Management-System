@@ -16,6 +16,8 @@ function normalizeTalentDates(raw) {
   for (const key of DATE_FIELDS) {
     if (out[key]) out[key] = new Date(out[key]);
   }
+  if (Array.isArray(out.salaryHistory)) out.salaryHistory = out.salaryHistory.map((s) => ({ ...s, effectiveDate: new Date(s.effectiveDate) }));
+  if (out.pendingSalary) out.pendingSalary = { ...out.pendingSalary, effectiveDate: new Date(out.pendingSalary.effectiveDate) };
   return out;
 }
 
@@ -85,6 +87,7 @@ const api = {
     updateContract: async (id, payload) => normalizeTalentDates(await request(`/talents/${id}/contract`, { method: "PATCH", body: JSON.stringify(payload) })),
     updateWorkPass: async (id, payload) => normalizeTalentDates(await request(`/talents/${id}/workpass`, { method: "PATCH", body: JSON.stringify(payload) })),
     updateInsurance: async (id, payload) => normalizeTalentDates(await request(`/talents/${id}/insurance`, { method: "PATCH", body: JSON.stringify(payload) })),
+    recordSalaryChange: async (id, payload) => normalizeTalentDates(await request(`/talents/${id}/salary-change`, { method: "POST", body: JSON.stringify(payload) })),
     updatePayroll: async (id, payload) => normalizeTalentDates(await request(`/talents/${id}/payroll`, { method: "PATCH", body: JSON.stringify(payload) })),
     updateBilling: async (id, payload) => normalizeTalentDates(await request(`/talents/${id}/billing`, { method: "PATCH", body: JSON.stringify(payload) })),
     updateLeaveTimesheet: async (id, payload) => normalizeTalentDates(await request(`/talents/${id}/leave-timesheet`, { method: "PATCH", body: JSON.stringify(payload) })),

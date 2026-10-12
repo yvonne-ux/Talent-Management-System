@@ -6,6 +6,7 @@ import { daysLeft, totalEmployerCost, talentRevenue } from "../../lib/computed";
 import { RENEWAL_THRESHOLDS } from "../../config/businessRules";
 import { talentInclude } from "../talents/serialize";
 import { canViewFinancialsForRequest } from "../../lib/permissions";
+import { applyDueSalaryChanges } from "../../lib/salaryChanges";
 
 export const dashboardRouter = Router();
 dashboardRouter.use(requireAuth);
@@ -14,6 +15,7 @@ dashboardRouter.get(
   "/home",
   asyncHandler(async (req, res) => {
     const today = new Date();
+    await applyDueSalaryChanges();
     const talents = await prisma.talent.findMany({ where: { active: true }, include: talentInclude });
 
     let pendingStart = 0;
