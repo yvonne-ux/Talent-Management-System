@@ -946,9 +946,7 @@
         </div>
 
         <div id="tab-payroll" class="profile-tab-panel hidden">
-          <div class="flex justify-end mb-3">
-            <button type="button" id="profileEditPayrollBtn" class="btn-secondary rounded-md px-3 py-1.5 text-xs font-medium">Edit Profile</button>
-          </div>
+          <div class="flex justify-end mb-3" id="profilePayrollEditBar"></div>
           <div class="grid md:grid-cols-2 gap-5">
             <div class="stat-card rounded-lg p-4">
               <h2 class="text-sm font-semibold mb-3">Contract &amp; Financials</h2>
@@ -2432,86 +2430,6 @@
       <button type="button" id="closeManageTalentsModalBtn" class="btn-primary rounded-md px-4 py-2 text-sm font-medium flex-1">Done</button>
     </div>
   </div>
-</div>
-
-<!-- Payroll Edit Modal (scoped to Talent Payroll and Cost fields only) -->
-<div id="payrollModalOverlay" class="overlay"></div>
-<div id="payrollEditModal" class="modal-card">
-  <div class="flex items-center justify-between px-6 py-4 border-b border-[var(--border)]">
-    <div>
-      <h2 class="text-lg font-bold">Payroll &amp; Cost</h2>
-      <p class="text-xs text-[var(--muted)]" id="payrollModalTitle">—</p>
-    </div>
-    <button id="closePayrollModal" class="icon-btn"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-  </div>
-
-  <div id="payrollViewContent" class="px-6 py-5">
-    <dl id="payrollViewFields" class="text-sm space-y-2.5"></dl>
-    <div class="flex justify-end pt-5">
-      <button type="button" id="payrollEditBtn" class="btn-primary rounded-md px-4 py-2 text-sm font-medium">Edit Profile</button>
-    </div>
-  </div>
-
-  <form id="payrollEditForm" class="px-6 py-5 space-y-4 hidden">
-    <div class="grid grid-cols-2 gap-4">
-      <div>
-        <label class="field-label">Basic Salary (Monthly, S$)</label>
-        <input id="pe_salary" type="number" min="0" step="50" class="filter-input" />
-      </div>
-      <div>
-        <label class="field-label">Skills Development Levy (S$)</label>
-        <input id="pe_skillsDevelopmentLevy" type="number" min="0" step="1" class="filter-input" />
-      </div>
-    </div>
-    <div class="grid grid-cols-2 gap-4">
-      <div>
-        <label class="field-label">WICA (S$)</label>
-        <input id="pe_wica" type="number" min="0" step="1" class="filter-input" />
-      </div>
-      <div>
-        <label class="field-label">Medical Insurance (S$)</label>
-        <input id="pe_medicalInsuranceCost" type="number" min="0" step="1" class="filter-input" />
-      </div>
-    </div>
-    <div class="grid grid-cols-2 gap-4">
-      <div>
-        <label class="field-label">Levy (S$)</label>
-        <input id="pe_levy" type="number" min="0" step="1" class="filter-input" />
-      </div>
-      <div>
-        <label class="field-label">Service Fee (S$)</label>
-        <input id="pe_serviceFee" type="number" min="0" step="1" class="filter-input" />
-      </div>
-    </div>
-    <div class="grid grid-cols-2 gap-4">
-      <div>
-        <label class="field-label">Allowances (S$)</label>
-        <input id="pe_allowances" type="number" min="0" step="1" class="filter-input" />
-      </div>
-      <div>
-        <label class="field-label">Claims / Reimbursements (S$)</label>
-        <input id="pe_claimsReimbursements" type="number" min="0" step="1" class="filter-input" />
-      </div>
-    </div>
-    <div class="grid grid-cols-2 gap-4">
-      <div>
-        <label class="field-label">Overtime (S$, if applicable)</label>
-        <input id="pe_overtime" type="number" min="0" step="1" class="filter-input" />
-      </div>
-      <div>
-        <label class="field-label">No-pay Leave Deduction (S$)</label>
-        <input id="pe_noPayLeaveDeduction" type="number" min="0" step="1" class="filter-input" />
-      </div>
-    </div>
-    <div>
-      <label class="field-label">Other Statutory Costs (S$)</label>
-      <input id="pe_otherStatutoryCosts" type="number" min="0" step="1" class="filter-input" />
-    </div>
-    <div class="flex justify-end gap-2 pt-2">
-      <button type="button" id="cancelPayrollModal" class="btn-secondary rounded-md px-4 py-2 text-sm font-medium">Cancel</button>
-      <button type="submit" class="btn-primary rounded-md px-4 py-2 text-sm font-medium">Save Changes</button>
-    </div>
-  </form>
 </div>
 
 <!-- Metric Trend Chart Modal -->
