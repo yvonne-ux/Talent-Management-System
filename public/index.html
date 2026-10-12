@@ -2048,6 +2048,10 @@
     <button id="closeImportModal" class="icon-btn"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
   </div>
   <div class="px-6 py-5 space-y-5">
+    <button type="button" id="openCostImportFromImport" class="hidden w-full text-left rounded-lg border border-[var(--border)] px-3 py-2 text-sm hover:bg-[var(--blue-tint)]">
+      <span class="font-medium">Changing salary, costs or charge rate from a date?</span>
+      <span class="text-[var(--blue)]">Import cost changes instead →</span>
+    </button>
     <div>
       <label class="field-label">Client</label>
       <input id="importClientName" type="text" list="importClientList" placeholder="e.g. Fujitsu Asia" class="filter-input" />
@@ -2065,6 +2069,34 @@
   <div class="flex justify-end gap-2 px-6 py-4 border-t border-[var(--border)]">
     <button type="button" id="cancelImportModal" class="btn-secondary rounded-md px-4 py-2 text-sm font-medium">Cancel</button>
     <button type="button" id="confirmImportBtn" disabled class="btn-primary rounded-md px-4 py-2 text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed">Import</button>
+  </div>
+</div>
+
+<!-- Import Cost Changes Modal -->
+<div id="costImportModalOverlay" class="overlay"></div>
+<div id="costImportModal" class="modal-card modal-wide">
+  <div class="flex items-center justify-between px-6 py-4 border-b border-[var(--border)]">
+    <div>
+      <h2 class="text-lg font-bold">Import cost changes</h2>
+      <p class="text-xs text-[var(--muted)]">Salary, cost and charge rate changes for existing talents, each with the date it takes effect.</p>
+    </div>
+    <button id="closeCostImportModal" class="icon-btn"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+  </div>
+  <div class="px-6 py-5 space-y-4">
+    <div class="text-sm text-[var(--muted)] space-y-1">
+      <p>One row per talent per effective date. Fill in only what changes; blank cells are left as they are. Talents are matched by Talent ID, then FIN No., then Name (add Client if two talents share a name).</p>
+      <p>Dates today or earlier take effect straight away. Later dates are scheduled and switch over on that day. Total Employment Cost sets Other Statutory Costs to whatever is left after salary, CPF, levy, SDL, WICA and insurance.</p>
+      <button type="button" id="downloadCostTemplateBtn" class="text-[var(--blue)] font-medium">Download template with your current talents (.xlsx)</button>
+    </div>
+    <div>
+      <label class="field-label">File</label>
+      <input id="costImportFileInput" type="file" accept=".xlsx,.xls,.csv" class="filter-input" />
+    </div>
+    <div id="costImportPreview" class="hidden text-sm"></div>
+  </div>
+  <div class="flex justify-end gap-2 px-6 py-4 border-t border-[var(--border)]">
+    <button type="button" id="cancelCostImportModal" class="btn-secondary rounded-md px-4 py-2 text-sm font-medium">Cancel</button>
+    <button type="button" id="confirmCostImportBtn" disabled class="btn-primary rounded-md px-4 py-2 text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed">Import</button>
   </div>
 </div>
 

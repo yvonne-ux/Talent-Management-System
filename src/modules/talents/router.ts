@@ -9,7 +9,8 @@ import { nextRenewalSeq, isExpiryWithinRenewalWindow } from "../../lib/renewalRu
 import { canViewFinancialsForRequest } from "../../lib/permissions";
 import { isCpfEligible } from "../../lib/computed";
 import { diffFields, logChanges, FieldChange } from "../../lib/changeLog";
-import { applyDueSalaryChanges, recordSalaryChange } from "../../lib/salaryChanges";
+import { recordSalaryChange } from "../../lib/salaryChanges";
+import { applyDueChanges, importCostChanges, CostImportRow } from "../../lib/costChanges";
 
 export const talentsRouter = Router();
 talentsRouter.use(requireAuth);
@@ -18,7 +19,7 @@ talentsRouter.get(
   "/",
   asyncHandler(async (req, res) => {
     const includeInactive = req.query.includeInactive === "true";
-    await applyDueSalaryChanges();
+    await applyDueChanges();
     const talents = await prisma.talent.findMany({
       where: includeInactive ? {} : { active: true },
       include: talentInclude,
@@ -33,7 +34,7 @@ talentsRouter.get(
   "/:id",
   asyncHandler(async (req, res) => {
     const id = Number(req.params.id);
-    await applyDueSalaryChanges();
+    await applyDueChanges();
     const talent = await prisma.talent.findUnique({ where: { id }, include: talentInclude });
     if (!talent) return void res.status(404).json({ error: "Talent not found" });
     res.json(serializeTalent(talent, await canViewFinancialsForRequest(req)));
@@ -338,6 +339,18 @@ talentsRouter.post(
     }
 
     res.json({ created, updated, skipped });
+  })
+);
+
+// Cost-change import: dated salary, cost item and charge rate changes for existing talents.
+// dryRun returns what each row would do without saving, for the preview before Import.
+talentsRouter.post(
+  "/cost-changes/import",
+  asyncHandler(async (req, res) => {
+    if (!(await canViewFinancialsForRequest(req))) return void res.status(403).json({ error: "Not allowed to change costs" });
+    const { rows, dryRun } = req.body as { rows?: CostImportRow[]; dryRun?: boolean };
+    if (!Array.isArray(rows) || rows.length === 0) return void res.status(400).json({ error: "rows must be a non-empty array" });
+    res.json(await importCostChanges(rows, { dryRun: dryRun !== false, userId: req.session.userId }));
   })
 );
 

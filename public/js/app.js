@@ -1550,6 +1550,245 @@ document.getElementById('confirmImportBtn').addEventListener('click', async ()=>
   }
 });
 
+/* ---------- Import Cost Changes Modal ----------
+   Dated changes to salary, cost items and charge rate for talents already in the system
+   (e.g. an increment from 1 Jan, a new charge rate from 1 Apr). The file is parsed here, then
+   sent to the server twice: first as a dry run that matches each row to a talent and returns
+   what would change (shown as the preview), then for real when Import is clicked. */
+const COST_IMPORT_HEADER_MAP = {
+  'talent id': 'talentCode', 'talent code': 'talentCode', id: 'talentCode',
+  name: 'name', 'talent name': 'name',
+  'fin no.': 'finNo', 'fin no': 'finNo', fin: 'finNo', 'nric/fin': 'finNo', 'fin/nric': 'finNo',
+  client: 'client',
+  'effective date': 'effectiveDate', 'effective from': 'effectiveDate', 'with effect from': 'effectiveDate', 'w.e.f.': 'effectiveDate', wef: 'effectiveDate', 'w.e.f': 'effectiveDate',
+  'basic salary': 'basicSalary', salary: 'basicSalary', 'new salary': 'basicSalary', 'new basic salary': 'basicSalary',
+  cpf: 'cpf',
+  sdl: 'skillsDevelopmentLevy', 'skills development levy': 'skillsDevelopmentLevy',
+  'insurance cost': 'medicalInsuranceCost', 'medical insurance': 'medicalInsuranceCost', 'medical insurance cost': 'medicalInsuranceCost',
+  levy: 'levy', 'foreign worker levy': 'levy', fwl: 'levy',
+  'service fee': 'serviceFee',
+  allowances: 'allowances', allowance: 'allowances',
+  'other statutory costs': 'otherStatutoryCosts', 'other costs': 'otherStatutoryCosts',
+  'total employment cost': 'totalEmploymentCost',
+  'monthly charge rate': 'monthlyChargeRate',
+  'daily charge rate': 'dailyChargeRate',
+  'charge rate': 'chargeRate',
+  remarks: 'remarks',
+};
+const COST_IMPORT_TEXT_KEYS = new Set(['talentCode', 'name', 'finNo', 'client', 'remarks']);
+const COST_TEMPLATE_HEADERS = ['Talent ID', 'Name', 'FIN No.', 'Client', 'Effective Date', 'Basic Salary', 'CPF', 'SDL', 'WICA', 'Insurance Cost', 'Levy', 'Service Fee', 'Allowances', 'Other Statutory Costs', 'Total Employment Cost', 'Monthly Charge Rate', 'Daily Charge Rate', 'Remarks'];
+
+function talentCodeLabel(id){ return `C${String(id).padStart(6,'0')}`; }
+
+function escHtml(s){ return String(s ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch])); }
+
+function parseCostImportWorkbook(workbook){
+  // Use the sheet with the most recognised headers, as the talent import does.
+  let best = workbook.SheetNames[0], bestScore = -1;
+  for(const name of workbook.SheetNames){
+    const head = (XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1, defval: null })[0] || []).map(h => (h ?? '').toString().trim().toLowerCase());
+    const score = head.filter(h => h in COST_IMPORT_HEADER_MAP).length;
+    if(score > bestScore){ bestScore = score; best = name; }
+  }
+  const raw = XLSX.utils.sheet_to_json(workbook.Sheets[best], { header: 1, defval: null });
+  if(!raw.length) throw new Error("The file appears to be empty.");
+  const headerRow = raw[0].map(h => (h ?? '').toString().trim().toLowerCase());
+  const colIndexByKey = {};
+  headerRow.forEach((h, idx)=>{
+    const key = COST_IMPORT_HEADER_MAP[h];
+    if(key && !(key in colIndexByKey)) colIndexByKey[key] = idx;
+  });
+  IMPORT_HEADER_FALLBACKS.forEach(({key, test})=>{
+    if(key in colIndexByKey) return;
+    const idx = headerRow.findIndex(test);
+    if(idx >= 0) colIndexByKey[key] = idx;
+  });
+  if(colIndexByKey.effectiveDate === undefined){
+    throw new Error(`Couldn't find an "Effective Date" column. Found headers: ${raw[0].filter(Boolean).join(', ')}`);
+  }
+  if(colIndexByKey.talentCode === undefined && colIndexByKey.name === undefined && colIndexByKey.finNo === undefined){
+    throw new Error(`Couldn't find a "Talent ID", "FIN No." or "Name" column to match talents on.`);
+  }
+  const matched = new Set(Object.values(colIndexByKey));
+  // "Current ..." columns in the downloaded template are there for reference only.
+  const unrecognizedHeaders = raw[0].map((h, idx)=>({ text: (h ?? '').toString().trim(), idx }))
+    .filter(({text, idx})=>text && !matched.has(idx) && !/^current\b/i.test(text)).map(({text})=>text);
+
+  // rows[i] is sheet row i + 2, which is how the server numbers its results.
+  const rows = [];
+  const parseWarnings = [];
+  for(let i = 1; i < raw.length; i++){
+    const r = raw[i] || [];
+    if(!r.some(v => v !== null && v !== '')) continue;
+    const row = { _sheetRow: i + 1 };
+    for(const [key, idx] of Object.entries(colIndexByKey)){
+      const val = r[idx];
+      if(val === null || val === undefined || val === '') continue;
+      if(COST_IMPORT_TEXT_KEYS.has(key)) row[key] = String(val).trim();
+      else if(key === 'effectiveDate'){
+        const d = parseImportedDate(val);
+        if(d) row.effectiveDate = d.toISOString();
+        else parseWarnings.push({ row: i + 1, field: 'Effective Date', rawValue: String(val) });
+      } else {
+        const n = parseImportedNumber(val);
+        if(!isNaN(n)) row[key] = n;
+        else if(!IMPORT_BLANK_MARKERS.has(String(val).trim().toLowerCase())) parseWarnings.push({ row: i + 1, field: key, rawValue: String(val) });
+      }
+    }
+    // Rows from the downloaded template that weren't filled in: nothing to import, not an error.
+    const hasFigures = Object.keys(row).some(k => !COST_IMPORT_TEXT_KEYS.has(k) && k !== '_sheetRow' && k !== 'effectiveDate');
+    if(!row.effectiveDate && !hasFigures) continue;
+    rows.push(row);
+  }
+  return { rows, unrecognizedHeaders, parseWarnings };
+}
+
+function readCostImportFile(file){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Couldn't read the file."));
+    const isCsv = /\.csv$/i.test(file.name);
+    reader.onload = () => {
+      try{
+        const workbook = isCsv
+          ? XLSX.read(reader.result, { type: 'string', raw: true })
+          : XLSX.read(reader.result, { type: 'array', cellDates: true });
+        resolve(parseCostImportWorkbook(workbook));
+      }catch(err){ reject(err); }
+    };
+    if(isCsv) reader.readAsText(file); else reader.readAsArrayBuffer(file);
+  });
+}
+
+const costImportModalOverlay = document.getElementById('costImportModalOverlay');
+const costImportModal = document.getElementById('costImportModal');
+let costImportRows = null;
+
+function openCostImportModal(){
+  costImportRows = null;
+  document.getElementById('costImportFileInput').value = '';
+  document.getElementById('costImportPreview').classList.add('hidden');
+  document.getElementById('confirmCostImportBtn').disabled = true;
+  costImportModalOverlay.classList.add('open');
+  costImportModal.classList.add('open');
+}
+function closeCostImportModalFn(){
+  costImportModalOverlay.classList.remove('open');
+  costImportModal.classList.remove('open');
+}
+document.getElementById('openCostImportFromImport').addEventListener('click', ()=>{ closeImportModalFn(); openCostImportModal(); });
+document.getElementById('openImportModalBtn').addEventListener('click', ()=>{
+  document.getElementById('openCostImportFromImport').classList.toggle('hidden', !canViewFinancials);
+});
+document.getElementById('closeCostImportModal').addEventListener('click', closeCostImportModalFn);
+document.getElementById('cancelCostImportModal').addEventListener('click', closeCostImportModalFn);
+costImportModalOverlay.addEventListener('click', closeCostImportModalFn);
+
+// The template lists every active talent with their ID, FIN and client already filled in, and
+// today's figures in "Current ..." columns for reference, so only the date and new figures are typed.
+document.getElementById('downloadCostTemplateBtn').addEventListener('click', ()=>{
+  const headers = [...COST_TEMPLATE_HEADERS, 'Current Basic Salary', 'Current Total Employment Cost', 'Current Charge Rate', 'Current Billing Type'];
+  const list = talents.filter(c=>c.active !== false).slice().sort((a, b)=>(a.client || '').localeCompare(b.client || '') || a.name.localeCompare(b.name));
+  const rows = list.map(c=>{
+    const row = COST_TEMPLATE_HEADERS.map(()=>'');
+    row[0] = talentCodeLabel(c.id); row[1] = c.name; row[2] = c.nric || ''; row[3] = c.client || '';
+    const total = (c.salary||0) + (c.cpf||0) + (c.levy||0) + (c.skillsDevelopmentLevy||0) + (c.wica||0) + (c.medicalInsuranceCost||0) + (c.otherStatutoryCosts||0);
+    return [...row, c.salary ?? '', Math.round(total * 100) / 100, c.chargeRate ?? '', c.billingType || ''];
+  });
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+  ws['!cols'] = headers.map(h => ({ wch: Math.max(12, h.length + 2) }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Cost changes');
+  XLSX.writeFile(wb, `cost-changes-${today.toISOString().slice(0,10)}.xlsx`);
+});
+
+function costValueLabel(field, v){
+  if(v === null || v === undefined) return '-';
+  return typeof v === 'number' ? fmtMoney(v) : escHtml(v);
+}
+
+function renderCostImportPreview(result, unrecognizedHeaders, parseWarnings){
+  const statusPill = (r)=> r.status === 'now'
+    ? `<span class="pill" style="background:var(--green-bg);color:var(--green-text)">Takes effect now</span>`
+    : r.status === 'scheduled'
+      ? `<span class="pill" style="background:var(--amber-bg);color:var(--amber-text)">Scheduled</span>`
+      : `<span class="pill" style="background:var(--red-bg);color:var(--red-text)">Skipped</span>`;
+  const rowsHtml = result.results.map(r=>{
+    const who = r.talentId ? `${escHtml(r.talentName)}<div class="text-xs text-[var(--muted)]">${talentCodeLabel(r.talentId)}${r.client ? ` · ${escHtml(r.client)}` : ''}</div>` : escHtml(r.name);
+    const changes = r.status === 'skipped'
+      ? `<span style="color:var(--red-text)">${escHtml(r.reason)}</span>`
+      : r.changes.map(c=>`<div class="${c.historyOnly ? 'text-[var(--muted)] line-through' : ''}">${escHtml(c.label)}: <span class="whitespace-nowrap">${costValueLabel(c.field, c.from)}</span> → <span class="font-medium whitespace-nowrap">${costValueLabel(c.field, c.to)}</span></div>`).join('');
+    const warnings = r.warnings.length ? r.warnings.map(w=>`<div class="text-xs" style="color:var(--amber-text)">⚠ ${escHtml(w)}</div>`).join('') : '';
+    return `<tr class="border-t border-[var(--border)] align-top">
+      <td class="px-2 py-1.5 text-[var(--muted)]">${r.row}</td>
+      <td class="px-2 py-1.5">${who}</td>
+      <td class="px-2 py-1.5 whitespace-nowrap">${r.effectiveDate ? fmtDate(new Date(r.effectiveDate)) : '-'}</td>
+      <td class="px-2 py-1.5">${statusPill(r)}</td>
+      <td class="px-2 py-1.5">${changes}${warnings}</td>
+    </tr>`;
+  }).join('');
+  const parts = [];
+  if(result.now) parts.push(`<span class="font-semibold">${result.now}</span> take${result.now===1?'s':''} effect now`);
+  if(result.scheduled) parts.push(`<span class="font-semibold">${result.scheduled}</span> scheduled for a later date`);
+  if(result.skipped) parts.push(`<span class="font-semibold" style="color:var(--red-text)">${result.skipped}</span> skipped`);
+  const unrecognizedHtml = unrecognizedHeaders.length
+    ? `<div class="text-[var(--muted)] mt-1">Columns not used (check nothing important is missing): ${escHtml(unrecognizedHeaders.join(', '))}</div>` : '';
+  const parseHtml = parseWarnings.length
+    ? `<div class="mt-1" style="color:var(--red-text)">⚠ Couldn't read, left blank: ${parseWarnings.map(w=>`row ${w.row} ${escHtml(w.field)} = "${escHtml(w.rawValue)}"`).join('; ')}</div>` : '';
+  return `<div class="rounded-lg border border-[var(--border)] p-3 mb-3">${parts.join(', ')}.${unrecognizedHtml}${parseHtml}</div>
+    <div class="rounded-lg border border-[var(--border)] overflow-x-auto"><table class="w-full text-sm">
+      <thead><tr class="text-left text-xs text-[var(--muted)]"><th class="px-2 py-1.5">Row</th><th class="px-2 py-1.5">Talent</th><th class="px-2 py-1.5">Effective</th><th class="px-2 py-1.5">Status</th><th class="px-2 py-1.5">Changes</th></tr></thead>
+      <tbody>${rowsHtml}</tbody></table></div>`;
+}
+
+document.getElementById('costImportFileInput').addEventListener('change', async (e)=>{
+  const file = e.target.files[0];
+  const previewEl = document.getElementById('costImportPreview');
+  const confirmBtn = document.getElementById('confirmCostImportBtn');
+  costImportRows = null;
+  confirmBtn.disabled = true;
+  if(!file){ previewEl.classList.add('hidden'); return; }
+  previewEl.classList.remove('hidden');
+  if(!/\.(xlsx|xls|csv)$/i.test(file.name)){
+    previewEl.innerHTML = `<div style="color:var(--red-text)">"${escHtml(file.name)}" isn't a supported file type. Please select an Excel (.xlsx/.xls) or CSV (.csv) file.</div>`;
+    return;
+  }
+  previewEl.innerHTML = `<div class="text-[var(--muted)]">Checking rows against talents…</div>`;
+  try{
+    const { rows, unrecognizedHeaders, parseWarnings } = await readCostImportFile(file);
+    if(!rows.length) throw new Error("No rows have an Effective Date or new figures filled in yet.");
+    const result = await api.talents.importCostChanges(rows, true);
+    previewEl.innerHTML = renderCostImportPreview(result, unrecognizedHeaders, parseWarnings);
+    if(result.now + result.scheduled > 0){
+      costImportRows = rows;
+      confirmBtn.disabled = false;
+    }
+  }catch(err){
+    previewEl.innerHTML = `<div style="color:var(--red-text)">${escHtml(err.message)}</div>`;
+  }
+});
+
+document.getElementById('confirmCostImportBtn').addEventListener('click', async ()=>{
+  if(!costImportRows) return;
+  const btn = document.getElementById('confirmCostImportBtn');
+  btn.disabled = true;
+  btn.textContent = "Importing…";
+  try{
+    const result = await api.talents.importCostChanges(costImportRows, false);
+    closeCostImportModalFn();
+    const skippedNote = result.skipped ? `, ${result.skipped} skipped` : '';
+    showToast(`Cost changes imported — ${result.now} now, ${result.scheduled} scheduled${skippedNote}.`, checkIcon);
+    talents = await api.talents.list();
+    renderStats();
+    renderTable();
+  }catch(err){
+    showToast(err.message || "Import failed — please try again.");
+  }finally{
+    btn.disabled = false;
+    btn.textContent = "Import";
+  }
+});
+
 /* ---------- Import/Export Clients ---------- */
 const CLIENT_IMPORT_HEADER_MAP = {
   name: 'name',
@@ -2289,9 +2528,12 @@ function renderTalentProfile(c){
   /* ----- Payroll & Cost tab (breakdown, read-only) ----- */
   document.getElementById('profileFinancials').innerHTML = [
     dlRow("Salary (Monthly)", c.salary ? fmtMoney(c.salary) : '-'),
-    ...(c.pendingSalary ? [dlRow("Scheduled Salary Change", `<span style="color:var(--amber-text)">${fmtMoney(c.pendingSalary.toSalary)} from ${fmtDate(c.pendingSalary.effectiveDate)}</span>`)] : []),
+    ...((c.scheduledCostChanges || []).length ? [dlRow("Scheduled Changes", c.scheduledCostChanges.map(ch=>
+      `<div class="font-normal text-xs" style="color:var(--amber-text)">From ${fmtDate(ch.effectiveDate)}: ${ch.items.map(i=>`${i.label} ${fmtMoney(i.value)}`).join(', ')}</div>`).join(''))] : []),
     ...((c.salaryHistory || []).length ? [dlRow("Salary History", (c.salaryHistory || []).slice(0, 5).map(h=>
       `<div class="font-normal text-xs">${fmtDate(h.effectiveDate)}: ${h.fromSalary === null ? '-' : fmtMoney(h.fromSalary)} → ${fmtMoney(h.toSalary)}</div>`).join(''))] : []),
+    ...((c.costHistory || []).length ? [dlRow("Cost Change History", c.costHistory.slice(0, 5).map(ch=>
+      `<div class="font-normal text-xs">${fmtDate(ch.effectiveDate)}: ${ch.items.map(i=>`${i.label} ${fmtMoney(i.value)}`).join(', ')}</div>`).join(''))] : []),
     dlRow("Charge Rate", chargeRateLabel(c)),
     dlRow("Contract Start", fmtDate(c.contractStart)),
     dlRow("Contract End", `<span class="${contractAlert?'date-alert':''}">${fmtDate(c.contractEnd)}${contractAlert?` (${c.contractDaysLeft}d)`:''}</span>`),
@@ -5966,7 +6208,7 @@ function renderRenewalTalentPanel(c, type){
     : `<div class="rounded-lg px-4 py-3 text-sm" style="background:var(--green-bg);color:var(--green-text)">Nothing needs attention for ${c.name} right now.</div>`;
 
   const pending = c.pendingSalary
-    ? `<div class="sm:col-span-2 text-xs rounded-md px-3 py-2" style="background:var(--amber-bg);color:var(--amber-text)">Scheduled: salary changes to ${fmtMoney(c.pendingSalary.toSalary)} from ${fmtDate(c.pendingSalary.effectiveDate)}. A new salary below replaces this.</div>`
+    ? `<div class="sm:col-span-2 text-xs rounded-md px-3 py-2" style="background:var(--amber-bg);color:var(--amber-text)">Scheduled: salary changes to ${fmtMoney(c.pendingSalary.toSalary)} from ${fmtDate(c.pendingSalary.effectiveDate)}${(c.scheduledCostChanges || []).filter(ch=>ch.items.some(i=>i.label === 'Salary')).length > 1 ? ', with more salary changes after that' : ''}. A new salary below replaces ${(c.scheduledCostChanges || []).filter(ch=>ch.items.some(i=>i.label === 'Salary')).length > 1 ? 'all of them' : 'this'}.</div>`
     : '';
 
   document.getElementById('ru_talentFields').innerHTML = summary + sections.map((s, i)=>{

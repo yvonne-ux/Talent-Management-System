@@ -17,6 +17,9 @@ function normalizeTalentDates(raw) {
     if (out[key]) out[key] = new Date(out[key]);
   }
   if (Array.isArray(out.salaryHistory)) out.salaryHistory = out.salaryHistory.map((s) => ({ ...s, effectiveDate: new Date(s.effectiveDate) }));
+  for (const key of ["scheduledCostChanges", "costHistory"]) {
+    if (Array.isArray(out[key])) out[key] = out[key].map((c) => ({ ...c, effectiveDate: new Date(c.effectiveDate) }));
+  }
   if (out.pendingSalary) out.pendingSalary = { ...out.pendingSalary, effectiveDate: new Date(out.pendingSalary.effectiveDate) };
   return out;
 }
@@ -98,6 +101,7 @@ const api = {
     sendInsuranceNotice: async (id) => normalizeTalentDates(await request(`/talents/${id}/insurance/notice`, { method: "POST" })),
     remove: (id) => request(`/talents/${id}`, { method: "DELETE" }),
     import: (client, rows) => request("/talents/import", { method: "POST", body: JSON.stringify({ client, rows }) }),
+    importCostChanges: (rows, dryRun) => request("/talents/cost-changes/import", { method: "POST", body: JSON.stringify({ rows, dryRun }) }),
   },
   dashboard: {
     home: () => request("/dashboard/home"),
