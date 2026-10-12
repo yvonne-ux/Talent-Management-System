@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { daysLeft, contractStatusDisplay, passStatusDisplay, isExpiringSoon } from "../../lib/computed";
 import { fromJson } from "../../lib/json";
+import { COST_FIELD_LABELS } from "../../lib/costChanges";
 
 const talentWithRelations = Prisma.validator<Prisma.TalentDefaultArgs>()({
   include: {
@@ -16,10 +17,17 @@ const talentWithRelations = Prisma.validator<Prisma.TalentDefaultArgs>()({
     leaveTimesheet: true,
     offboarding: true,
     salaryChanges: { orderBy: { effectiveDate: "desc" } },
+    costChanges: { orderBy: { effectiveDate: "desc" } },
   },
 });
 export type TalentWithRelations = Prisma.TalentGetPayload<typeof talentWithRelations>;
 export const talentInclude = talentWithRelations.include;
+
+function costChangeItems(c: TalentWithRelations["costChanges"][number]) {
+  return (Object.keys(COST_FIELD_LABELS) as (keyof typeof c)[])
+    .filter((k) => k in c && c[k] !== null && k !== "billingType")
+    .map((k) => ({ label: COST_FIELD_LABELS[k as string] + (k === "chargeRate" && c.billingType ? ` (${c.billingType})` : ""), value: c[k] as number }));
+}
 
 function yn(value: boolean | null | undefined): "Yes" | "No" {
   return value ? "Yes" : "No";
@@ -148,9 +156,24 @@ export function serializeTalent(t: TalentWithRelations, canViewFinancials = true
       .filter((s) => s.appliedAt)
       .map((s) => ({ fromSalary: s.fromSalary, toSalary: s.toSalary, effectiveDate: s.effectiveDate })),
     pendingSalary: (() => {
-      const p = t.salaryChanges.find((s) => !s.appliedAt);
+      // The next one to take effect (an import can queue several).
+      const p = t.salaryChanges.filter((s) => !s.appliedAt).at(-1);
       return p ? { toSalary: p.toSalary, effectiveDate: p.effectiveDate, remarks: p.remarks } : null;
     })(),
+    // Every salary, cost item and charge rate change still waiting for its date, soonest first,
+    // and the cost changes (other than salary) already in effect, newest first.
+    scheduledCostChanges: (() => {
+      const byDate = new Map<number, { effectiveDate: Date; items: { label: string; value: number }[] }>();
+      const add = (d: Date, items: { label: string; value: number }[]) => {
+        const entry = byDate.get(d.getTime()) ?? { effectiveDate: d, items: [] };
+        entry.items.push(...items);
+        byDate.set(d.getTime(), entry);
+      };
+      for (const s of t.salaryChanges) if (!s.appliedAt) add(s.effectiveDate, [{ label: "Salary", value: s.toSalary }]);
+      for (const c of t.costChanges) if (!c.appliedAt) add(c.effectiveDate, costChangeItems(c));
+      return [...byDate.values()].sort((a, b) => a.effectiveDate.getTime() - b.effectiveDate.getTime());
+    })(),
+    costHistory: t.costChanges.filter((c) => c.appliedAt).slice(0, 10).map((c) => ({ effectiveDate: c.effectiveDate, items: costChangeItems(c) })),
 
     // Talent Billing
     chargeRate: t.talentBilling?.chargeRate ?? 0,
@@ -209,6 +232,8 @@ export function serializeTalent(t: TalentWithRelations, canViewFinancials = true
     for (const key of BILLING_FIELDS) (result as Record<string, unknown>)[key] = null;
     (result as Record<string, unknown>).salaryHistory = [];
     (result as Record<string, unknown>).pendingSalary = null;
+    (result as Record<string, unknown>).scheduledCostChanges = [];
+    (result as Record<string, unknown>).costHistory = [];
   }
 
   return result;
