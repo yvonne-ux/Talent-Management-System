@@ -131,6 +131,7 @@ interface ImportRow {
   name?: string;
   position?: string;
   basicSalary?: number;
+  cpf?: number;
   levy?: number;
   medicalInsuranceCost?: number;
   skillsDevelopmentLevy?: number;
@@ -199,7 +200,10 @@ talentsRouter.post(
       const hasWorkPass = !!passTypeRaw && !NO_WORK_PASS_MARKERS.has(passTypeRaw.toLowerCase());
 
       const salary = Number(r.basicSalary) || 0;
-      const cpf = isCpfEligible(passTypeRaw) ? Math.round(salary * 0.17) : 0;
+      // A CPF column in the sheet wins (including an explicit 0); without one, fall back to
+      // 17% of salary for Singapore Citizens/PRs as before.
+      const hasCpfColumnValue = r.cpf !== undefined && r.cpf !== null && !isNaN(Number(r.cpf));
+      const cpf = hasCpfColumnValue ? Number(r.cpf) : isCpfEligible(passTypeRaw) ? Math.round(salary * 0.17) : 0;
       const levy = Number(r.levy) || 0;
       const skillsDevelopmentLevy = Number(r.skillsDevelopmentLevy) || 0;
       const wica = Number(r.wica) || 0;
@@ -261,6 +265,10 @@ talentsRouter.post(
           const payrollData = { salary, cpf, levy, skillsDevelopmentLevy, wica, medicalInsuranceCost, serviceFee, otherStatutoryCosts };
           await prisma.payroll.update({ where: { talentId: existing.id }, data: payrollData });
           changes.push(["payroll", diffFields("payroll", before.payroll, payrollData)]);
+        } else if (hasCpfColumnValue) {
+          // No salary in this row (so the rest of payroll is left alone), but the sheet does give CPF.
+          await prisma.payroll.update({ where: { talentId: existing.id }, data: { cpf } });
+          changes.push(["payroll", diffFields("payroll", before.payroll, { cpf })]);
         }
         if (chargeRate) {
           await prisma.talentBilling.update({ where: { talentId: existing.id }, data: { chargeRate, billingType } });
