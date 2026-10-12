@@ -180,7 +180,10 @@ talentsRouter.post(
         continue;
       }
 
-      const nric = (r.finNo ?? "").toString().trim();
+      // "NA"/"-" in FIN No. means the talent has no FIN (e.g. Singapore Citizens and PRs). Treat it as
+      // blank: matching on it would merge every such row, across all clients, into one talent record.
+      const finRaw = (r.finNo ?? "").toString().trim();
+      const nric = NO_WORK_PASS_MARKERS.has(finRaw.toLowerCase()) ? "" : finRaw;
       const existing =
         (nric ? await prisma.talent.findFirst({ where: { nric, active: true } }) : null) ??
         (await prisma.talent.findFirst({ where: { name, clientId: client.id, active: true } }));
