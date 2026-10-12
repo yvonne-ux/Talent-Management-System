@@ -14,6 +14,7 @@ import { clientsRouter } from "./modules/clients/router";
 import { sowRouter } from "./modules/sow/router";
 import { poRouter } from "./modules/po/router";
 import { adminRouter } from "./modules/admin/router";
+import { changesRouter } from "./modules/changes/router";
 
 export function createApp() {
   const app = express();
@@ -78,6 +79,7 @@ export function createApp() {
   app.use("/api/sow", sowRouter);
   app.use("/api/po", poRouter);
   app.use("/api/admin", adminRouter);
+  app.use("/api/changes", changesRouter);
 
   app.use(express.static(path.join(__dirname, "..", "public")));
 
