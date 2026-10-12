@@ -1232,7 +1232,7 @@ document.getElementById('confirmExportBtn').addEventListener('click', ()=>{
 /* ---------- Import from Excel Modal ----------
    Reads a client tracking-sheet (.xlsx/.csv) matching the format the ops team already uses
    (see Fujitsu Asia Tracking Sheet.xlsx): Name, Position, Basic Salary, Total Employment Cost,
-   Monthly Charge Rate (or Daily Charge Rate for daily-billed talents), FIN No., Type of Pass, Entity, Work Pass Issuance/Expiry Date,
+   Monthly Charge Rate (or Daily Charge Rate for daily-billed talents), CPF, FIN No., Type of Pass, Entity, Work Pass Issuance/Expiry Date,
    Contract Start/End Date, Hiring Name, Verifier Email Address, Dept, Quotation Number,
    PO number, Owner. Column order is matched by header name (not position), so extra/reordered
    columns don't break it. Actual create-vs-update + dedup logic lives server-side
@@ -1241,6 +1241,7 @@ const IMPORT_HEADER_MAP = {
   name: 'name',
   position: 'position',
   'basic salary': 'basicSalary',
+  cpf: 'cpf',
   levy: 'levy',
   'insurance cost': 'medicalInsuranceCost',
   sdl: 'skillsDevelopmentLevy',
@@ -1264,7 +1265,7 @@ const IMPORT_HEADER_MAP = {
   owner: 'owner',
 };
 const IMPORT_DATE_KEYS = new Set(['workPassIssuanceDate', 'workPassExpiryDate', 'contractStartDate', 'contractEndDate']);
-const IMPORT_NUMBER_KEYS = new Set(['basicSalary', 'levy', 'medicalInsuranceCost', 'skillsDevelopmentLevy', 'wica', 'totalEmploymentCost', 'serviceFee', 'monthlyChargeRate', 'dailyChargeRate']);
+const IMPORT_NUMBER_KEYS = new Set(['basicSalary', 'cpf', 'levy', 'medicalInsuranceCost', 'skillsDevelopmentLevy', 'wica', 'totalEmploymentCost', 'serviceFee', 'monthlyChargeRate', 'dailyChargeRate']);
 // CSV cells are always plain text, so a currency-formatted number ("S$8,000.00") reads back
 // as a string that plain Number() can't parse (returns NaN, which then serializes to null
 // and silently defaults to 0 server-side). Strip everything except digits/./- before parsing.
@@ -1287,6 +1288,8 @@ function parseImportedNumber(val){
 // override a correct one — just fills a gap the fixed header map would otherwise miss.
 const IMPORT_HEADER_FALLBACKS = [
   { key: 'wica', test: h => /^wica\b/.test(h) },
+  // "Employer CPF", "CPF (17%)", "CPF Contribution"... -- the rate suffix varies like WICA's.
+  { key: 'cpf', test: h => /^(employer\s+)?cpf\b/.test(h) },
 ];
 // Sheets routinely use "NA"/"-" etc. to intentionally mean "not applicable" (e.g. an EP
 // holder genuinely has no Levy) — those shouldn't be flagged as a parse problem. Anything
@@ -1387,7 +1390,7 @@ function parseImportWorkbook(workbook){
     // can break out. Catches a mis-mapped or missed numeric column before its value silently
     // vanishes into the leftover "Other Statutory Costs" bucket (which floors at zero).
     if(row.totalEmploymentCost !== undefined){
-      const breakdown = (row.basicSalary||0) + (row.levy||0) + (row.skillsDevelopmentLevy||0) + (row.wica||0) + (row.medicalInsuranceCost||0);
+      const breakdown = (row.basicSalary||0) + (row.cpf||0) + (row.levy||0) + (row.skillsDevelopmentLevy||0) + (row.wica||0) + (row.medicalInsuranceCost||0);
       if(breakdown - row.totalEmploymentCost > 0.01){
         reconciliationWarnings.push({ row: i + 1, name, breakdown, totalEmploymentCost: row.totalEmploymentCost });
       }
