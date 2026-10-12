@@ -1297,6 +1297,39 @@ const IMPORT_HEADER_FALLBACKS = [
 // data that failed to come through rather than a deliberate non-applicability marker.
 const IMPORT_BLANK_MARKERS = new Set(['na', 'n/a', 'n.a.', 'none', 'nil', '-', '--']);
 
+// Turns an imported date cell into a Date at LOCAL midnight, or null if it can't be read.
+// SheetJS (0.18.5, cellDates) hands back real Excel date cells ~25 seconds BEFORE local
+// midnight in Singapore (it applies the 1899 historical UTC offset), so 1 Oct 2026 was being
+// stored and shown as 30 Sep 2026 — rounding to the nearest day fixes that. Text dates are
+// read day-first (dd/mm/yyyy), the Singapore convention, rather than JS's month-first.
+function parseImportedDate(val){
+  const atMidnight = (y, m, d) => {
+    const dt = new Date(y, m, d);
+    return (dt.getFullYear() === y && dt.getMonth() === m && dt.getDate() === d) ? dt : null;
+  };
+  if(val instanceof Date){
+    if(isNaN(val.getTime())) return null;
+    const r = new Date(val.getTime() + 12 * 60 * 60 * 1000);
+    return atMidnight(r.getFullYear(), r.getMonth(), r.getDate());
+  }
+  if(typeof val === 'number'){
+    const p = XLSX.SSF.parse_date_code(val);
+    return p ? atMidnight(p.y, p.m - 1, p.d) : null;
+  }
+  const s = String(val ?? '').trim();
+  if(!s) return null;
+  let m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2}|\d{4})$/);
+  if(m){
+    const y = m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3]);
+    return atMidnight(y, Number(m[2]) - 1, Number(m[1]));
+  }
+  m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if(m) return atMidnight(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const d = new Date(s.replace(/\bsept\b/i, 'Sep'));
+  if(isNaN(d.getTime())) return null;
+  return atMidnight(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
 // Workbooks sometimes have more than one sheet (e.g. a small subset on Sheet1 and the real,
 // comprehensive tracking data on Sheet2) — picking SheetNames[0] blindly can silently import
 // from the wrong one. Score each sheet by how many of its headers we actually recognize and
@@ -1369,9 +1402,13 @@ function parseImportWorkbook(workbook){
       if(val === null || val === undefined || val === '') return;
       if(IMPORT_DATE_KEYS.has(key)){
         // Real sheets sometimes have free text ("Pending Approval") in a date column instead
-        // of an actual date — skip the field rather than crashing the whole import on it.
-        const d = val instanceof Date ? val : new Date(val);
-        if(!isNaN(d.getTime())) row[key] = d.toISOString();
+        // of an actual date — skip the field rather than crashing the whole import on it, but
+        // flag it in the preview (unless it's an "n/a"-style marker) rather than silently dropping it.
+        const d = parseImportedDate(val);
+        if(d) row[key] = d.toISOString();
+        else if(!IMPORT_BLANK_MARKERS.has(String(val).trim().toLowerCase())){
+          parseWarnings.push({ row: i + 1, name, field: key, rawValue: String(val) });
+        }
       }
       else if(IMPORT_NUMBER_KEYS.has(key)){
         const n = parseImportedNumber(val);
@@ -1408,8 +1445,10 @@ function readImportFile(file){
     const isCsv = /\.csv$/i.test(file.name);
     reader.onload = () => {
       try{
+        // CSV is read as raw text so SheetJS doesn't turn "01/03/2026" into 3 Jan (month-first)
+        // before parseImportedDate reads it day-first.
         const workbook = isCsv
-          ? XLSX.read(reader.result, { type: 'string', cellDates: true })
+          ? XLSX.read(reader.result, { type: 'string', raw: true })
           : XLSX.read(reader.result, { type: 'array', cellDates: true });
         resolve(parseImportWorkbook(workbook));
       }catch(err){
@@ -1474,7 +1513,7 @@ document.getElementById('importFileInput').addEventListener('change', async (e)=
       ? `<div class="text-[var(--muted)] mt-1">Columns not mapped to a field (not imported — check nothing important is missing): ${unrecognizedHeaders.join(', ')}</div>`
       : '';
     const parseWarningsHtml = parseWarnings && parseWarnings.length
-      ? `<div class="mt-1" style="color:var(--red-text)">⚠ Couldn't read as a number, skipped: ${parseWarnings.map(w=>`row ${w.row} "${w.name}" ${w.field} = "${w.rawValue}"`).join('; ')}</div>`
+      ? `<div class="mt-1" style="color:var(--red-text)">⚠ Couldn't read as a number or date, skipped: ${parseWarnings.map(w=>`row ${w.row} "${w.name}" ${w.field} = "${w.rawValue}"`).join('; ')}</div>`
       : '';
     const reconciliationHtml = reconciliationWarnings && reconciliationWarnings.length
       ? `<div class="mt-1" style="color:var(--red-text)">⚠ Numbers don't add up to the sheet's Total Employment Cost (check for a mis-mapped or missing column): ${reconciliationWarnings.map(w=>`"${w.name}" breakdown ${fmtMoney(w.breakdown)} > sheet total ${fmtMoney(w.totalEmploymentCost)}`).join('; ')}</div>`
