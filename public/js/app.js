@@ -2322,6 +2322,17 @@ function refreshProfileIfOpen(c){
 
 let profileEditingTabs = new Set();
 
+// Monthly cost items edited on the Payroll and Cost tab. The dated ones go through CostChange
+// (effective date); claims, overtime and no-pay leave vary month to month and save as they are.
+const PAYROLL_TAB_COST_FIELDS = [
+  ["cpf","CPF"], ["skillsDevelopmentLevy","Skills Development Levy"], ["wica","WICA"],
+  ["medicalInsuranceCost","Medical Insurance Cost"], ["levy","Foreign Worker Levy"], ["serviceFee","Service Fee"],
+  ["allowances","Allowances"], ["otherStatutoryCosts","Other Statutory Costs"],
+  ["claimsReimbursements","Claims / Reimbursements"], ["overtime","Overtime"], ["noPayLeaveDeduction","No-Pay Leave Deduction"],
+];
+const PAYROLL_TAB_UNDATED_FIELDS = new Set(["claimsReimbursements","overtime","noPayLeaveDeduction"]);
+let payrollTabInitial = {};
+
 function editBarHtml(tabKey){
   return profileEditingTabs.has(tabKey)
     ? `<div class="flex gap-2">
@@ -2539,39 +2550,66 @@ function renderTalentProfile(c){
     ].join('');
   }
 
-  /* ----- Payroll & Cost tab (breakdown, read-only) ----- */
-  document.getElementById('profileFinancials').innerHTML = [
-    dlRow("Salary (Monthly)", c.salary ? fmtMoney(c.salary) : '-'),
-    ...((c.scheduledCostChanges || []).length ? [dlRow("Scheduled Changes", c.scheduledCostChanges.map(ch=>
-      `<div class="font-normal text-xs" style="color:var(--amber-text)">From ${fmtDate(ch.effectiveDate)}: ${ch.items.map(i=>`${i.label} ${fmtMoney(i.value)}`).join(', ')}</div>`).join(''))] : []),
-    ...((c.salaryHistory || []).length ? [dlRow("Salary History", (c.salaryHistory || []).slice(0, 5).map(h=>
-      `<div class="font-normal text-xs">${fmtDate(h.effectiveDate)}: ${h.fromSalary === null ? '-' : fmtMoney(h.fromSalary)} → ${fmtMoney(h.toSalary)}</div>`).join(''))] : []),
-    ...((c.costHistory || []).length ? [dlRow("Cost Change History", c.costHistory.slice(0, 5).map(ch=>
-      `<div class="font-normal text-xs">${fmtDate(ch.effectiveDate)}: ${ch.items.map(i=>`${i.label} ${fmtMoney(i.value)}`).join(', ')}</div>`).join(''))] : []),
-    dlRow("Charge Rate", chargeRateLabel(c)),
-    dlRow("Contract Start", fmtDate(c.contractStart)),
-    dlRow("Contract End", `<span class="${contractAlert?'date-alert':''}">${fmtDate(c.contractEnd)}${contractAlert?` (${c.contractDaysLeft}d)`:''}</span>`),
-    dlRow("Billing Type", c.billingType),
-    dlRow("Invoice Status", c.invoiceStatus),
-  ].join('');
+  /* ----- Payroll & Cost tab ----- */
+  document.getElementById('profilePayrollEditBar').innerHTML = editBarHtml('payroll');
+  const payrollEditing = profileEditingTabs.has('payroll');
+  document.getElementById('profilePayrollMonthFilter').classList.toggle('hidden', payrollEditing);
+  if(payrollEditing){
+    // Salary, charge rate, billing type and cost items save as dated changes (same as the
+    // Renewal Centre panel and the cost-changes import), so a raise can start on a future date.
+    document.getElementById('profileFinancials').innerHTML = [
+      editDateRow("Changes Take Effect From", "p_payEffectiveDate", new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()))),
+      `<div class="text-[11px] text-[var(--muted)] pb-1">Applies to salary, charge rate, billing type and the monthly cost items.</div>`,
+      editNumberRow("Salary (Monthly, S$)", "p_salary", c.salary),
+      editSelectRow("Billing Type", "p_pay_billingType", billingTypes, c.billingType),
+      editNumberRow(c.billingType === "Daily" ? "Charge Rate (Daily, S$)" : "Charge Rate (Monthly, S$)", "p_pay_chargeRate", c.chargeRate),
+      editDateRow("Contract Start", "p_contractStart", c.contractStart),
+      editDateRow("Contract End", "p_contractEnd", c.contractEnd),
+      editSelectRow("Invoice Status", "p_pay_invoiceStatus", invoiceStatuses, c.invoiceStatus),
+    ].join('');
+    document.getElementById('profilePayrollBreakdown').innerHTML = PAYROLL_TAB_COST_FIELDS.map(([key, label])=>
+      editNumberRow(`${label} (S$)`, `p_cost_${key}`, c[key])).join('');
+    document.getElementById('p_pay_billingType').addEventListener('change', e=>{
+      document.getElementById('p_pay_chargeRate').previousElementSibling.textContent =
+        e.target.value === "Daily" ? "Charge Rate (Daily, S$)" : "Charge Rate (Monthly, S$)";
+    });
+    // Remember what was on screen so Save only sends the fields that were changed.
+    payrollTabInitial = {};
+    document.querySelectorAll('#tab-payroll input, #tab-payroll select').forEach(el=>{ if(el.id) payrollTabInitial[el.id] = el.value; });
+  } else {
+    document.getElementById('profileFinancials').innerHTML = [
+      dlRow("Salary (Monthly)", c.salary ? fmtMoney(c.salary) : '-'),
+      ...((c.scheduledCostChanges || []).length ? [dlRow("Scheduled Changes", c.scheduledCostChanges.map(ch=>
+        `<div class="font-normal text-xs" style="color:var(--amber-text)">From ${fmtDate(ch.effectiveDate)}: ${ch.items.map(i=>`${i.label} ${fmtMoney(i.value)}`).join(', ')}</div>`).join(''))] : []),
+      ...((c.salaryHistory || []).length ? [dlRow("Salary History", (c.salaryHistory || []).slice(0, 5).map(h=>
+        `<div class="font-normal text-xs">${fmtDate(h.effectiveDate)}: ${h.fromSalary === null ? '-' : fmtMoney(h.fromSalary)} → ${fmtMoney(h.toSalary)}</div>`).join(''))] : []),
+      ...((c.costHistory || []).length ? [dlRow("Cost Change History", c.costHistory.slice(0, 5).map(ch=>
+        `<div class="font-normal text-xs">${fmtDate(ch.effectiveDate)}: ${ch.items.map(i=>`${i.label} ${fmtMoney(i.value)}`).join(', ')}</div>`).join(''))] : []),
+      dlRow("Charge Rate", chargeRateLabel(c)),
+      dlRow("Contract Start", fmtDate(c.contractStart)),
+      dlRow("Contract End", `<span class="${contractAlert?'date-alert':''}">${fmtDate(c.contractEnd)}${contractAlert?` (${c.contractDaysLeft}d)`:''}</span>`),
+      dlRow("Billing Type", c.billingType),
+      dlRow("Invoice Status", c.invoiceStatus),
+    ].join('');
 
-  initProfileMonthFilter('profilePayrollMonthFilter');
-  const payrollFigures = financeTalentFigures(c, profilePayrollMonthOffset);
-  document.getElementById('profilePayrollBreakdown').innerHTML = [
-    dlRow("CPF", fmtMoney(payrollFigures.cpf)),
-    dlRow("Skills Development Levy", fmtMoney(payrollFigures.sdl)),
-    dlRow("WICA", fmtMoney(payrollFigures.wica)),
-    dlRow("Medical Insurance Cost", fmtMoney(payrollFigures.insurance)),
-    dlRow("Allowances", fmtMoney(payrollFigures.allowances)),
-    dlRow("Claims / Reimbursements", fmtMoney(payrollFigures.claims)),
-    dlRow("Overtime", fmtMoney(payrollFigures.overtime)),
-    dlRow("No-Pay Leave Deduction", `-${fmtMoney(payrollFigures.noPayLeaveDeduction)}`),
-    dlRow("Other Statutory Costs", fmtMoney(payrollFigures.otherStatutoryCosts)),
-    dlRow("Work Pass Admin Fee", `${fmtMoney(payrollFigures.adminFee)}<div class="text-[10px] text-[var(--muted)] font-normal">${passTypeLabel(c)} · ${c.passStatus || "N/A"}</div>`),
-    dlRow("Total Employer Cost (Est.)", `<span class="font-semibold">${fmtMoney(payrollFigures.totalCost)}</span>`),
-    dlRow("Revenue Billed (Est. Monthly)", fmtMoney(payrollFigures.revenue)),
-    dlRow("Gross Profit (Est.)", `<span class="font-semibold" style="color:${(payrollFigures.revenue-payrollFigures.totalCost)>=0?'var(--green-text)':'var(--red-text)'}">${fmtMoney(payrollFigures.revenue-payrollFigures.totalCost)}</span>`),
-  ].join('');
+    initProfileMonthFilter('profilePayrollMonthFilter');
+    const payrollFigures = financeTalentFigures(c, profilePayrollMonthOffset);
+    document.getElementById('profilePayrollBreakdown').innerHTML = [
+      dlRow("CPF", fmtMoney(payrollFigures.cpf)),
+      dlRow("Skills Development Levy", fmtMoney(payrollFigures.sdl)),
+      dlRow("WICA", fmtMoney(payrollFigures.wica)),
+      dlRow("Medical Insurance Cost", fmtMoney(payrollFigures.insurance)),
+      dlRow("Allowances", fmtMoney(payrollFigures.allowances)),
+      dlRow("Claims / Reimbursements", fmtMoney(payrollFigures.claims)),
+      dlRow("Overtime", fmtMoney(payrollFigures.overtime)),
+      dlRow("No-Pay Leave Deduction", `-${fmtMoney(payrollFigures.noPayLeaveDeduction)}`),
+      dlRow("Other Statutory Costs", fmtMoney(payrollFigures.otherStatutoryCosts)),
+      dlRow("Work Pass Admin Fee", `${fmtMoney(payrollFigures.adminFee)}<div class="text-[10px] text-[var(--muted)] font-normal">${passTypeLabel(c)} · ${c.passStatus || "N/A"}</div>`),
+      dlRow("Total Employer Cost (Est.)", `<span class="font-semibold">${fmtMoney(payrollFigures.totalCost)}</span>`),
+      dlRow("Revenue Billed (Est. Monthly)", fmtMoney(payrollFigures.revenue)),
+      dlRow("Gross Profit (Est.)", `<span class="font-semibold" style="color:${(payrollFigures.revenue-payrollFigures.totalCost)>=0?'var(--green-text)':'var(--red-text)'}">${fmtMoney(payrollFigures.revenue-payrollFigures.totalCost)}</span>`),
+    ].join('');
+  }
   document.getElementById('profilePayrollMonthFilter').onchange = e=>{
     profilePayrollMonthOffset = Number(e.target.value);
     renderTalentProfile(c);
@@ -2669,7 +2707,6 @@ function renderTalentProfile(c){
   document.getElementById('tab-'+activeProfileTab).classList.remove('hidden');
 
   document.getElementById('profileEditContractBtn').onclick = ()=> openContractEditModal(c.id);
-  document.getElementById('profileEditPayrollBtn').onclick = ()=> openPayrollEditModal(c.id);
   document.getElementById('profileEditLeaveBtn').onclick = ()=> openLeaveViewModal(c.id);
   document.getElementById('profileEditOffboardBtn').onclick = ()=> openOffboardViewModal(c.id);
 
@@ -2724,6 +2761,8 @@ async function saveProfileTab(tabKey, c){
         policyRenewalStatus: document.getElementById('p_policyRenewalStatus').value,
         policyRemarks: document.getElementById('p_policyRemarks').value.trim(),
       });
+    } else if(tabKey === 'payroll'){
+      updated = await savePayrollTab(c);
     } else if(tabKey === 'billing'){
       updated = await api.talents.updateBilling(c.id, {
         billingType: document.getElementById('p_billingType').value,
@@ -2742,6 +2781,38 @@ async function saveProfileTab(tabKey, c){
   }catch(err){
     showToast(`Failed to update ${c.name}: ${err.message}`, null);
   }
+}
+
+async function savePayrollTab(c){
+  const val = id => document.getElementById(id).value;
+  const changed = id => val(id) !== payrollTabInitial[id];
+  const effectiveDate = val('p_payEffectiveDate');
+  const costs = {};
+  if(changed('p_pay_billingType') && val('p_pay_billingType')) costs.billingType = val('p_pay_billingType');
+  if(changed('p_pay_chargeRate')) costs.chargeRate = Number(val('p_pay_chargeRate')) || 0;
+  const payrollNow = {};
+  for(const [key] of PAYROLL_TAB_COST_FIELDS){
+    if(!changed(`p_cost_${key}`)) continue;
+    const n = Number(val(`p_cost_${key}`)) || 0;
+    if(PAYROLL_TAB_UNDATED_FIELDS.has(key)) payrollNow[key] = n; else costs[key] = n;
+  }
+  const salaryChanged = changed('p_salary');
+  if((salaryChanged || Object.keys(costs).length) && !effectiveDate) throw new Error("Pick the date the changes take effect");
+  const contract = {};
+  for(const [key, id] of [["contractStart","p_contractStart"], ["contractEnd","p_contractEnd"]]){
+    if(!changed(id)) continue;
+    if(!val(id)) throw new Error("Contract start and end dates can't be blank");
+    contract[key] = val(id);
+  }
+
+  let updated = null;
+  if(Object.keys(contract).length) updated = await api.talents.updateContract(c.id, contract);
+  if(changed('p_pay_invoiceStatus') && val('p_pay_invoiceStatus')) updated = await api.talents.updateBilling(c.id, { invoiceStatus: val('p_pay_invoiceStatus') });
+  if(Object.keys(payrollNow).length) updated = await api.talents.updatePayroll(c.id, payrollNow);
+  // Salary first, so CPF on the automatic 17% follows it before any cost items for the same date.
+  if(salaryChanged) updated = await api.talents.recordSalaryChange(c.id, { salary: Number(val('p_salary')) || 0, effectiveDate });
+  if(Object.keys(costs).length) updated = await api.talents.recordCostChange(c.id, { ...costs, effectiveDate });
+  return updated;
 }
 
 async function removeTalent(c){
@@ -4690,124 +4761,6 @@ function renderBilling(){
     el.addEventListener('click', ()=> openTalentProfile(Number(el.dataset.id), 'billing'));
   });
 }
-
-/* ---------- Payroll Edit Modal (scoped to Talent Payroll and Cost fields only) ---------- */
-const payrollModalOverlay = document.getElementById('payrollModalOverlay');
-const payrollEditModal = document.getElementById('payrollEditModal');
-const payrollViewContent = document.getElementById('payrollViewContent');
-const payrollEditForm = document.getElementById('payrollEditForm');
-let editingPayrollId = null;
-
-function renderPayrollView(c){
-  const totalMonthlyCost = c.salary + c.skillsDevelopmentLevy + c.wica + c.medicalInsuranceCost
-    + c.allowances + c.claimsReimbursements + c.overtime - c.noPayLeaveDeduction + c.otherStatutoryCosts;
-  const totalDailyCost = totalMonthlyCost / 22;
-  const contractMonths = Math.max(1, Math.round((c.contractEnd - c.contractStart) / (1000*60*60*24*30)));
-  const totalProjectCost = totalMonthlyCost * contractMonths;
-  const daysWorkedThisMonth = Math.min(30, Math.max(1, 30 + c.contractDaysLeft));
-  const finalSalaryOffboarding = (c.salary/30) * daysWorkedThisMonth;
-  const leaveEncashment = c.annualLeaveBalance * (c.salary/30);
-
-  document.getElementById('payrollViewFields').innerHTML = [
-    dlRow("Basic Salary (Monthly)", c.salary ? fmtMoney(c.salary) : '-'),
-    dlRow("Skills Development Levy", fmtMoney(c.skillsDevelopmentLevy)),
-    dlRow("WICA", fmtMoney(c.wica)),
-    dlRow("Medical Insurance", fmtMoney(c.medicalInsuranceCost)),
-    dlRow("Levy", fmtMoney(c.levy)),
-    dlRow("Service Fee", fmtMoney(c.serviceFee)),
-    dlRow("Allowances", fmtMoney(c.allowances)),
-    dlRow("Claims / Reimbursements", fmtMoney(c.claimsReimbursements)),
-    dlRow("Overtime", c.overtime ? fmtMoney(c.overtime) : "N/A"),
-    dlRow("No-pay Leave Deduction", c.noPayLeaveDeduction ? fmtMoney(c.noPayLeaveDeduction) : "S$ 0"),
-    dlRow("Other Statutory Costs", fmtMoney(c.otherStatutoryCosts)),
-    `<div class="border-t border-[var(--border)] my-2"></div>`,
-    dlRow("Total Monthly Cost", `<span class="font-semibold">${fmtMoney(totalMonthlyCost)}</span>`),
-    dlRow("Total Daily Cost", fmtMoney(totalDailyCost)),
-    dlRow("Total Project Cost", fmtMoney(totalProjectCost)),
-    dlRow("Final Salary (Offboarding)", fmtMoney(finalSalaryOffboarding)),
-    dlRow("Leave Encashment", fmtMoney(leaveEncashment)),
-  ].join('');
-}
-
-function showPayrollView(){
-  payrollViewContent.classList.remove('hidden');
-  payrollEditForm.classList.add('hidden');
-}
-function showPayrollEditForm(c){
-  document.getElementById('pe_salary').value = c.salary;
-  document.getElementById('pe_skillsDevelopmentLevy').value = c.skillsDevelopmentLevy;
-  document.getElementById('pe_wica').value = c.wica;
-  document.getElementById('pe_medicalInsuranceCost').value = c.medicalInsuranceCost;
-  document.getElementById('pe_levy').value = c.levy;
-  document.getElementById('pe_serviceFee').value = c.serviceFee;
-  document.getElementById('pe_allowances').value = c.allowances;
-  document.getElementById('pe_claimsReimbursements').value = c.claimsReimbursements;
-  document.getElementById('pe_overtime').value = c.overtime;
-  document.getElementById('pe_noPayLeaveDeduction').value = c.noPayLeaveDeduction;
-  document.getElementById('pe_otherStatutoryCosts').value = c.otherStatutoryCosts;
-  payrollViewContent.classList.add('hidden');
-  payrollEditForm.classList.remove('hidden');
-}
-
-function openPayrollEditModal(id){
-  const c = talents.find(x=>x.id === id);
-  if(!c) return;
-  editingPayrollId = id;
-  document.getElementById('payrollModalTitle').textContent = c.name;
-  renderPayrollView(c);
-  showPayrollView();
-  payrollModalOverlay.classList.add('open');
-  payrollEditModal.classList.add('open');
-}
-function closePayrollEditModalFn(){
-  payrollModalOverlay.classList.remove('open');
-  payrollEditModal.classList.remove('open');
-  editingPayrollId = null;
-}
-document.getElementById('closePayrollModal').addEventListener('click', closePayrollEditModalFn);
-payrollModalOverlay.addEventListener('click', closePayrollEditModalFn);
-
-document.getElementById('payrollEditBtn').addEventListener('click', ()=>{
-  const c = talents.find(x=>x.id === editingPayrollId);
-  if(!c) return;
-  showPayrollEditForm(c);
-});
-document.getElementById('cancelPayrollModal').addEventListener('click', ()=>{
-  showPayrollView();
-});
-
-payrollEditForm.addEventListener('submit', async e=>{
-  e.preventDefault();
-  const c = talents.find(x=>x.id === editingPayrollId);
-  if(!c) return;
-  const payload = {
-    salary: Number(document.getElementById('pe_salary').value),
-    skillsDevelopmentLevy: Number(document.getElementById('pe_skillsDevelopmentLevy').value),
-    wica: Number(document.getElementById('pe_wica').value),
-    medicalInsuranceCost: Number(document.getElementById('pe_medicalInsuranceCost').value),
-    levy: Number(document.getElementById('pe_levy').value),
-    serviceFee: Number(document.getElementById('pe_serviceFee').value),
-    allowances: Number(document.getElementById('pe_allowances').value),
-    claimsReimbursements: Number(document.getElementById('pe_claimsReimbursements').value),
-    overtime: Number(document.getElementById('pe_overtime').value),
-    noPayLeaveDeduction: Number(document.getElementById('pe_noPayLeaveDeduction').value),
-    otherStatutoryCosts: Number(document.getElementById('pe_otherStatutoryCosts').value),
-  };
-  try{
-    const updated = await api.talents.updatePayroll(c.id, payload);
-    Object.assign(c, updated);
-    computeDerived(c);
-    renderPayrollView(c);
-    showPayrollView();
-    renderFinance();
-    renderStats();
-    renderTable();
-    refreshProfileIfOpen(c);
-    showToast(`${c.name}'s payroll details updated`, checkIcon);
-  }catch(err){
-    showToast(`Failed to update payroll: ${err.message}`, null);
-  }
-});
 
 /* ---------- OPERATIONS (LEAVE & TIMESHEETS) ---------- */
 let operationsSearchTerm = "";
