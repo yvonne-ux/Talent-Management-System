@@ -127,6 +127,7 @@ model Talent {
   sowLinks            SowTalent[]
   poLinks             PoTalent[]
   timesheetSnapshots  TimesheetSnapshot[]
+  salaryChanges       SalaryChange[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -231,6 +232,25 @@ model Payroll {
   otherStatutoryCosts   Float @default(0)
 
   updatedAt DateTime @updatedAt
+}
+
+// Salary changes with the date they take effect. Payroll.salary always holds the salary in effect
+// today; a change dated in the future waits here (appliedAt null) and is copied onto Payroll.salary
+// once its effective date arrives.
+model SalaryChange {
+  id            String    @id @default(cuid())
+  talentId      Int
+  talent        Talent    @relation(fields: [talentId], references: [id], onDelete: Cascade)
+  fromSalary    Float?
+  toSalary      Float
+  effectiveDate DateTime
+  appliedAt     DateTime?
+  remarks       String?
+  userId        String?
+  createdAt     DateTime  @default(now())
+
+  @@index([talentId])
+  @@index([appliedAt, effectiveDate])
 }
 
 model TalentBilling {
