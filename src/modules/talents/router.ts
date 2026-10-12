@@ -10,7 +10,7 @@ import { canViewFinancialsForRequest } from "../../lib/permissions";
 import { isCpfEligible } from "../../lib/computed";
 import { diffFields, logChanges, FieldChange } from "../../lib/changeLog";
 import { recordSalaryChange } from "../../lib/salaryChanges";
-import { applyDueChanges, importCostChanges, CostImportRow } from "../../lib/costChanges";
+import { applyDueChanges, importCostChanges, CostImportRow, recordCostChange, CostValues, PAYROLL_COST_FIELDS, COST_FIELD_LABELS } from "../../lib/costChanges";
 
 export const talentsRouter = Router();
 talentsRouter.use(requireAuth);
@@ -699,6 +699,32 @@ talentsRouter.post(
     if (!Number.isFinite(salary) || salary < 0) return void res.status(400).json({ error: "Salary must be a number" });
     if (Number.isNaN(effectiveDate.getTime())) return void res.status(400).json({ error: "Effective date is not a valid date" });
     await recordSalaryChange(id, salary, effectiveDate, {
+      userId: req.session.userId,
+      remarks: typeof b.remarks === "string" && b.remarks.trim() ? b.remarks.trim() : null,
+    });
+    res.json(await reserialize(id, req));
+  })
+);
+
+// Dated change to cost items and/or charge rate, from the Renewal Centre panel. Uses the same
+// CostChange records as the cost-changes import, so it applies on its effective date.
+talentsRouter.post(
+  "/:id/cost-change",
+  asyncHandler(async (req, res) => {
+    if (!(await canViewFinancialsForRequest(req))) return void res.status(403).json({ error: "Not allowed to change costs" });
+    const id = Number(req.params.id);
+    const b = req.body as Record<string, unknown>;
+    const effectiveDate = b.effectiveDate ? new Date(b.effectiveDate as string) : new Date();
+    if (Number.isNaN(effectiveDate.getTime())) return void res.status(400).json({ error: "Effective date is not a valid date" });
+    const values: CostValues = {};
+    for (const key of [...PAYROLL_COST_FIELDS, "totalEmploymentCost", "chargeRate"] as const) {
+      if (!(key in b) || b[key] === null || b[key] === "") continue;
+      const n = Number(b[key]);
+      if (!Number.isFinite(n) || n < 0) return void res.status(400).json({ error: `${COST_FIELD_LABELS[key]} must be a number` });
+      values[key] = n;
+    }
+    if (b.billingType === "Monthly" || b.billingType === "Daily") values.billingType = b.billingType;
+    await recordCostChange(id, values, effectiveDate, {
       userId: req.session.userId,
       remarks: typeof b.remarks === "string" && b.remarks.trim() ? b.remarks.trim() : null,
     });
