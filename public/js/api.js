@@ -90,6 +90,7 @@ const api = {
     updateContract: async (id, payload) => normalizeTalentDates(await request(`/talents/${id}/contract`, { method: "PATCH", body: JSON.stringify(payload) })),
     updateWorkPass: async (id, payload) => normalizeTalentDates(await request(`/talents/${id}/workpass`, { method: "PATCH", body: JSON.stringify(payload) })),
     updateInsurance: async (id, payload) => normalizeTalentDates(await request(`/talents/${id}/insurance`, { method: "PATCH", body: JSON.stringify(payload) })),
+    recordCostChange: async (id, payload) => normalizeTalentDates(await request(`/talents/${id}/cost-change`, { method: "POST", body: JSON.stringify(payload) })),
     recordSalaryChange: async (id, payload) => normalizeTalentDates(await request(`/talents/${id}/salary-change`, { method: "POST", body: JSON.stringify(payload) })),
     updatePayroll: async (id, payload) => normalizeTalentDates(await request(`/talents/${id}/payroll`, { method: "PATCH", body: JSON.stringify(payload) })),
     updateBilling: async (id, payload) => normalizeTalentDates(await request(`/talents/${id}/billing`, { method: "PATCH", body: JSON.stringify(payload) })),

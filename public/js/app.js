@@ -6116,6 +6116,18 @@ function renewalConcerns(c){
   return out;
 }
 
+const RU_COST_FIELDS = [
+  ["cpf","CPF"], ["skillsDevelopmentLevy","Skills Development Levy"], ["wica","WICA"],
+  ["medicalInsuranceCost","Medical Insurance Cost"], ["levy","Foreign Worker Levy"], ["serviceFee","Service Fee"],
+  ["allowances","Allowances"], ["otherStatutoryCosts","Other Statutory Costs"],
+];
+// Same sum as the Payroll and Cost view and the cost-changes import (salary + statutory items).
+function ruTotalEmploymentCost(v){
+  const n = k => Number(v[k]) || 0;
+  return Math.round((n('salary') + n('cpf') + n('levy') + n('skillsDevelopmentLevy') + n('wica') + n('medicalInsuranceCost') + n('otherStatutoryCosts')) * 100) / 100;
+}
+let ruTotalTouched = false;
+
 /* Every editable field, grouped by the section (and API) it saves through. */
 function renewalTalentSections(c, type){
   const renewalSelect = ["Not Started","In Progress","Completed"];
@@ -6147,10 +6159,15 @@ function renewalTalentSections(c, type){
     { key:"policyRemarks", label:"Remarks", kind:"textarea", value:c.policyRemarks },
   ];
   const pay = [
+    { key:"salaryEffectiveDate", label:"Changes Below Take Effect From", kind:"date", value: type === 'contract' ? c.contractStart : today, nullable:true, wide:true },
     { key:"newSalary", label:"New Monthly Salary (S$)", kind:"number", value:"", placeholder: c.salary ? `Now ${fmtMoney(c.salary)}` : "No salary on file" },
-    { key:"salaryEffectiveDate", label:"Salary Effective From", kind:"date", value: type === 'contract' ? c.contractStart : today, nullable:true },
     { key:"billingType", label:"Billing Type", kind:"select", options:billingTypes, value:c.billingType },
     { key:"chargeRate", label:"Charge Rate (S$)", kind:"number", value:c.chargeRate },
+    // Cost items go through the same dated cost changes as the cost-changes import.
+    ...RU_COST_FIELDS.map(([key, label])=>({ key, label:`${label} (S$)`, kind:"number", value:c[key],
+      hint: key === 'cpf' ? "Leave as is and it moves with a new salary if it is on the automatic 17%." : undefined })),
+    { key:"totalEmploymentCost", label:"Total Employment Cost (S$)", kind:"number", value:ruTotalEmploymentCost(c), wide:true,
+      hint:"Follows the items above. Type a figure here to set it directly: Other Statutory Costs makes up the difference." },
   ];
   const personal = [
     { key:"name", label:"Full Name", kind:"text", value:c.name },
@@ -6169,7 +6186,7 @@ function renewalTalentSections(c, type){
     { id:"contract", title:"Contract", fields:contract },
     { id:"workpass", title:"Work Pass", fields:workpass },
     { id:"insurance", title:"Insurance", fields:insurance },
-    ...(canViewFinancials ? [{ id:"pay", title:"Salary and Charge Rate", fields:pay }] : []),
+    ...(canViewFinancials ? [{ id:"pay", title:"Salary, Costs and Charge Rate", fields:pay }] : []),
     { id:"personal", title:"Personal and Contact", fields:personal },
   ];
   // The section the Update Status button came from goes first and starts open.
@@ -6203,6 +6220,7 @@ function ruFieldHtml(f, concern){
     <label class="field-label ${concern?'!text-[var(--red-text)]':''}" for="${id}">${f.label}</label>
     ${input}
     ${concern ? `<div class="text-[11px] mt-1 font-medium" style="color:var(--red-text)">${concern}</div>` : ''}
+    ${f.hint ? `<div class="text-[11px] mt-1 text-[var(--muted)]">${f.hint}</div>` : ''}
   </div>`;
 }
 
@@ -6221,8 +6239,13 @@ function renderRenewalTalentPanel(c, type){
       </div>`
     : `<div class="rounded-lg px-4 py-3 text-sm" style="background:var(--green-bg);color:var(--green-text)">Nothing needs attention for ${c.name} right now.</div>`;
 
-  const pending = c.pendingSalary
-    ? `<div class="sm:col-span-2 text-xs rounded-md px-3 py-2" style="background:var(--amber-bg);color:var(--amber-text)">Scheduled: salary changes to ${fmtMoney(c.pendingSalary.toSalary)} from ${fmtDate(c.pendingSalary.effectiveDate)}${(c.scheduledCostChanges || []).filter(ch=>ch.items.some(i=>i.label === 'Salary')).length > 1 ? ', with more salary changes after that' : ''}. A new salary below replaces ${(c.scheduledCostChanges || []).filter(ch=>ch.items.some(i=>i.label === 'Salary')).length > 1 ? 'all of them' : 'this'}.</div>`
+  const scheduled = c.scheduledCostChanges || [];
+  const pending = scheduled.length
+    ? `<div class="sm:col-span-2 text-xs rounded-md px-3 py-2" style="background:var(--amber-bg);color:var(--amber-text)">
+        <div class="font-semibold mb-0.5">Already scheduled</div>
+        ${scheduled.map(ch=>`<div>From ${fmtDate(ch.effectiveDate)}: ${ch.items.map(i=>`${i.label} ${fmtMoney(i.value)}`).join(', ')}</div>`).join('')}
+        <div class="mt-1">A new salary below replaces any scheduled salary. Cost changes for the same date replace that date's scheduled costs.</div>
+      </div>`
     : '';
 
   document.getElementById('ru_talentFields').innerHTML = summary + sections.map((s, i)=>{
@@ -6234,7 +6257,7 @@ function renderRenewalTalentPanel(c, type){
         ${sectionConcerns ? `<span class="pill" style="background:var(--red-bg);color:var(--red-text)">${sectionConcerns} to check</span>` : ''}
       </summary>
       <div class="px-4 pb-4 pt-1 grid grid-cols-1 sm:grid-cols-2 gap-3">
-        ${s.id === 'pay' ? `<div class="sm:col-span-2 text-xs text-[var(--muted)]">Current salary: <span class="font-semibold text-[var(--text)]">${c.salary ? fmtMoney(c.salary) : '-'}</span>. Leave New Monthly Salary blank to keep it.</div>${pending}` : ''}
+        ${s.id === 'pay' ? `<div class="sm:col-span-2 text-xs text-[var(--muted)]">Current salary: <span class="font-semibold text-[var(--text)]">${c.salary ? fmtMoney(c.salary) : '-'}</span>. Leave New Monthly Salary blank to keep it. Change any cost below and it takes effect on the date above.</div>${pending}` : ''}
         ${s.fields.map(f=>ruFieldHtml(f, concerns[f.key])).join('')}
       </div>
     </details>`;
@@ -6247,6 +6270,19 @@ function renderRenewalTalentPanel(c, type){
   });
   // A salary increment usually starts with the renewed contract: follow the new commencement
   // date until the effective date is set by hand.
+  // Total Employment Cost recalculates as salary or items change, until it is typed over.
+  ruTotalTouched = false;
+  const totalEl = document.getElementById('ru_f_totalEmploymentCost');
+  if(totalEl){
+    totalEl.addEventListener('input', ()=>{ ruTotalTouched = true; });
+    const recalc = ()=>{
+      if(ruTotalTouched) return;
+      const v = { salary: document.getElementById('ru_f_newSalary').value || c.salary };
+      for(const [key] of RU_COST_FIELDS) v[key] = document.getElementById(`ru_f_${key}`).value;
+      totalEl.value = ruTotalEmploymentCost(v);
+    };
+    ['newSalary', ...RU_COST_FIELDS.map(([k])=>k)].forEach(k=> document.getElementById(`ru_f_${k}`).addEventListener('input', recalc));
+  }
   const eff = document.getElementById('ru_f_salaryEffectiveDate');
   const start = document.getElementById('ru_f_contractStart');
   if(eff){
@@ -6278,7 +6314,13 @@ async function saveRenewalTalentPanel(c){
   const pay = canViewFinancials ? ruChanged('pay') : {};
   const newSalary = document.getElementById('ru_f_newSalary')?.value ?? "";
   const effective = document.getElementById('ru_f_salaryEffectiveDate')?.value ?? "";
-  if(newSalary !== "" && !effective) throw new Error("Pick the date the new salary takes effect");
+  // Charge rate, billing type and cost items become one dated cost change.
+  const costs = {};
+  for(const key of ['billingType', 'chargeRate', ...RU_COST_FIELDS.map(([k])=>k)]){
+    if(key in pay) costs[key] = key === 'billingType' ? pay[key] : (pay[key] ?? 0);
+  }
+  if(ruTotalTouched && 'totalEmploymentCost' in pay && pay.totalEmploymentCost !== null) costs.totalEmploymentCost = pay.totalEmploymentCost;
+  if((newSalary !== "" || Object.keys(costs).length) && !effective) throw new Error("Pick the date the salary and cost changes take effect");
 
   let updated = null;
   if(Object.keys(personal).length){
@@ -6288,11 +6330,9 @@ async function saveRenewalTalentPanel(c){
   if(Object.keys(contract).length) updated = await api.talents.updateContract(c.id, contract);
   if(Object.keys(workpass).length) updated = await api.talents.updateWorkPass(c.id, workpass);
   if(Object.keys(insurance).length) updated = await api.talents.updateInsurance(c.id, insurance);
-  const billing = {};
-  if("billingType" in pay) billing.billingType = pay.billingType;
-  if("chargeRate" in pay) billing.chargeRate = pay.chargeRate ?? 0;
-  if(Object.keys(billing).length) updated = await api.talents.updateBilling(c.id, billing);
+  // Salary first, so a total employment cost for the same date is worked out against the new salary.
   if(newSalary !== "") updated = await api.talents.recordSalaryChange(c.id, { salary: Number(newSalary), effectiveDate: effective });
+  if(Object.keys(costs).length) updated = await api.talents.recordCostChange(c.id, { ...costs, effectiveDate: effective });
   return updated;
 }
 
