@@ -81,3 +81,35 @@ dashboardRouter.get(
     });
   })
 );
+
+/* Talents Overview month-on-month change. The page computes its counts with the same rules it
+   displays them with, saves them once a day here, and compares against the latest day saved on
+   or before the same date last month. */
+const SNAPSHOT_KEYS = ["active", "total", "pendingStart", "noticePeriod", "expiringContracts", "expiringPasses", "payroll"];
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+dashboardRouter.put(
+  "/talent-stats/:day",
+  asyncHandler(async (req, res) => {
+    const day = String(req.params.day);
+    if (!DAY_RE.test(day)) return res.status(400).json({ error: "day must be YYYY-MM-DD" });
+    const stats: Record<string, number> = {};
+    for (const key of SNAPSHOT_KEYS) {
+      const value = Number(req.body?.[key]);
+      if (!Number.isFinite(value)) return res.status(400).json({ error: `${key} must be a number` });
+      stats[key] = value;
+    }
+    await prisma.talentStatsSnapshot.upsert({ where: { day }, create: { day, stats }, update: { stats } });
+    res.json({ ok: true });
+  })
+);
+
+dashboardRouter.get(
+  "/talent-stats/on-or-before/:day",
+  asyncHandler(async (req, res) => {
+    const day = String(req.params.day);
+    if (!DAY_RE.test(day)) return res.status(400).json({ error: "day must be YYYY-MM-DD" });
+    const snapshot = await prisma.talentStatsSnapshot.findFirst({ where: { day: { lte: day } }, orderBy: { day: "desc" } });
+    res.json(snapshot ? { day: snapshot.day, stats: snapshot.stats } : null);
+  })
+);
