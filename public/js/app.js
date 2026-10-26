@@ -845,7 +845,11 @@ function applyPermissionUI(){
   });
   document.getElementById('adminSettingsNavLink').classList.toggle('hidden', !(currentUser && currentUser.role==='ADMIN'));
 }
-sidebarLinks.forEach(l=>l.addEventListener('click', e=>{ e.preventDefault(); switchView(l.dataset.view); }));
+sidebarLinks.forEach(l=>l.addEventListener('click', e=>{
+  e.preventDefault();
+  if(l.dataset.view === 'talents') showActiveTalentsByDefault();
+  switchView(l.dataset.view);
+}));
 document.getElementById('headerTitleLink').addEventListener('click', ()=> switchView('home'));
 // Logo click is a full refresh (not just a view switch) landing on Home, per user request --
 // bootstrap() below checks for this query param and clears it once handled.
@@ -870,12 +874,69 @@ document.getElementById('sidebarToggleBtn').addEventListener('click', ()=>{
 });
 
 /* ---------- Master stats (Talents tab) ---------- */
-/* Stable trend percentages for the Talents page workforce snapshot (no real historical
-   snapshot exists for these counts in this mockup, mirrors the Home dashboard's approach). */
-const talentsStatsTrends = {};
-["total","pendingStart","noticePeriod","headcount","expiringPasses","expiringContracts","payroll"].forEach(k=>{
-  talentsStatsTrends[k] = Math.round((Math.random()*30 - 12) * 10) / 10;
-});
+/* Contract statuses that count as a current active talent: started, still under contract and
+   working (not Pending Start, On Bench, Contract Ended, Inactive or Offboarded). */
+const ACTIVE_TALENT_STATUSES = ["Active","Eligible for Renewal","Requires Renewal","Notice Period"];
+
+/* Change since last month: the counts are saved once a day (TalentStatsSnapshot) and compared with
+   the latest day saved on or before the same date last month. */
+function localDayKey(d){
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function sameDayLastMonth(d){
+  const target = new Date(d.getFullYear(), d.getMonth()-1, 1);
+  const lastDay = new Date(target.getFullYear(), target.getMonth()+1, 0).getDate();
+  target.setDate(Math.min(d.getDate(), lastDay));
+  return target;
+}
+let talentsStatsBaseline; // undefined = not fetched yet, null = nothing saved from last month
+let talentsStatsBaselineRequested = false;
+let talentsStatsSavedJson = null;
+let talentsStatsSaveTimer = null;
+function loadTalentsStatsBaseline(){
+  if(talentsStatsBaselineRequested) return;
+  talentsStatsBaselineRequested = true;
+  api.dashboard.talentStatsOnOrBefore(localDayKey(sameDayLastMonth(today)))
+    .then(snap=>{ talentsStatsBaseline = snap; })
+    .catch(err=>{ console.error("Loading last month's talent counts failed:", err); talentsStatsBaseline = null; })
+    .finally(()=>renderStats());
+}
+function saveTalentsStats(stats){
+  const json = JSON.stringify(stats);
+  if(json === talentsStatsSavedJson) return;
+  clearTimeout(talentsStatsSaveTimer);
+  talentsStatsSaveTimer = setTimeout(()=>{
+    api.dashboard.saveTalentStats(localDayKey(new Date()), stats)
+      .then(()=>{ talentsStatsSavedJson = json; })
+      .catch(err=>console.error("Saving today's talent counts failed:", err));
+  }, 1500);
+}
+/* "▲ 3 (+4.2%) vs last month". upIsGood decides the colour: more expiring contracts is not good news. */
+function statChangeHtml(now, before, opts){
+  const o = opts || {};
+  if(talentsStatsBaseline === undefined) return `<div class="text-[11px] mt-1 text-[var(--muted)]">&nbsp;</div>`;
+  if(before === null || before === undefined) return `<div class="text-[11px] mt-1 text-[var(--muted)]">No figure from last month yet</div>`;
+  const diff = now - before;
+  const fmtUnits = v => o.money ? fmtMoney(v) : String(v);
+  if(diff === 0) return `<div class="text-[11px] font-semibold mt-1 text-[var(--muted)]">No change (0%) vs last month</div>`;
+  const good = (diff > 0) === (o.upIsGood !== false);
+  const color = good ? "var(--green-text)" : "var(--red-text)";
+  const arrow = diff > 0 ? "▲" : "▼";
+  const sign = diff > 0 ? "+" : "−";
+  const pct = before ? ` (${sign}${Math.abs(diff / before * 100).toFixed(1)}%)` : '';
+  return `<div class="text-[11px] font-semibold mt-1" style="color:${color}">${arrow} ${sign}${fmtUnits(Math.abs(diff))}${pct} vs last month</div>`;
+}
+
+/* Pressing Talents in the menu opens the table on current active talents, all other filters cleared. */
+function showActiveTalentsByDefault(){
+  searchTerm=""; clientTerm=[]; projectTerm=[]; workPassTypeTermMain=[]; workPassStatusTermMain=[]; ownerTermMain=[]; entityTermMain=[]; page=1;
+  contractStatusTermMain = [...ACTIVE_TALENT_STATUSES];
+  document.getElementById('searchInput').value="";
+  msClientFilter.reset(); msProjectFilter.reset(); msWorkPassTypeFilterMain.reset();
+  msWorkPassStatusFilterMain.reset(); msOwnerFilterMain.reset(); msEntityFilterMain.reset();
+  msContractStatusFilterMain.setSelected(contractStatusTermMain);
+  renderStats();
+}
 let talentsStatsMonthOffset = 0; // cosmetic only — does not filter the talents table below
 let talentsStatsMonthFilterInit = false;
 function initTalentsStatsMonthFilter(){
@@ -911,25 +972,29 @@ function renderStatsInner(){
   const total = talents.length;
   const pendingStart = talents.filter(c=>contractStatusDisplay(c).label === "Pending Start").length;
   const noticePeriod = talents.filter(c=>contractStatusDisplay(c).label === "Notice Period").length;
-  const headcount = talents.filter(c=>["Active","Eligible for Renewal","Requires Renewal","Notice Period","On Bench"].includes(contractStatusDisplay(c).label)).length;
+  const activeTalents = talents.filter(c=>ACTIVE_TALENT_STATUSES.includes(contractStatusDisplay(c).label)).length;
   const expiringContracts = talents.filter(c=>!contractClosed(c) && c.contractDaysLeft < 46).length;
   const expiringWorkPasses = talents.filter(c=>!passClosed(c) && c.passDaysLeft !== null && c.passDaysLeft < 46).length;
   const approachingExpiries = urgentNotificationsCount(collectUrgentNotifications());
   const totalPayroll = talents.reduce((s,c)=>s+c.salary,0);
 
+  const stats = { active: activeTalents, total, pendingStart, noticePeriod, expiringContracts, expiringPasses: expiringWorkPasses, payroll: totalPayroll };
+  saveTalentsStats(stats);
+  loadTalentsStatsBaseline();
+  const before = talentsStatsBaseline ? talentsStatsBaseline.stats : {};
   const cards = [
-    { key:"total", label:"Total Talents", value: total, color:"var(--text)", trend: talentsStatsTrends.total, desc:"Everyone currently in the system" },
-    { key:"pendingStart", label:"Pending Start", value: pendingStart, color:"var(--turquoise-text)", trend: talentsStatsTrends.pendingStart, desc:"Talents whose contract start date is still in the future" },
-    { key:"noticePeriod", label:"Serving Notice Period", value: noticePeriod, color:"#7A4A1E", trend: talentsStatsTrends.noticePeriod, desc:"Talents flagged as being in their contract notice period" },
-    { key:"headcount", label:"Current Headcount", value: headcount, color:"var(--green-text)", trend: talentsStatsTrends.headcount, desc:"Active workforce right now (Active, Eligible for Renewal, Requires Renewal, Notice Period, or On Bench)" },
-    { key:"expiringPasses", label:"Expiring Work Passes (<46d)", value: expiringWorkPasses, color:"var(--red-text)", trend: talentsStatsTrends.expiringPasses, desc:"Work passes expiring within 46 days" },
-    { key:"expiringContracts", label:"Expiring Contracts (<46d)", value: expiringContracts, color:"var(--red-text)", trend: talentsStatsTrends.expiringContracts, desc:"Contracts expiring within 46 days" },
-    { key:null, label:"Total Monthly Payroll", value: fmtMoney(totalPayroll), color:"var(--green-text)", trend: talentsStatsTrends.payroll, desc:"Sum of everyone's Basic Salary" },
+    { key:"active", label:"Current Active Talents", value: activeTalents, color:"var(--green-text)", change: statChangeHtml(activeTalents, before.active), featured:true, desc:"Talents working right now: started, under contract and not On Bench, Contract Ended, Inactive or Offboarded" },
+    { key:"total", label:"Total Talents", value: total, color:"var(--text)", change: statChangeHtml(total, before.total), desc:"Everyone currently in the system" },
+    { key:"pendingStart", label:"Pending Start", value: pendingStart, color:"var(--turquoise-text)", change: statChangeHtml(pendingStart, before.pendingStart), desc:"Talents whose contract start date is still in the future" },
+    { key:"noticePeriod", label:"Serving Notice Period", value: noticePeriod, color:"#7A4A1E", change: statChangeHtml(noticePeriod, before.noticePeriod, { upIsGood:false }), desc:"Talents flagged as being in their contract notice period" },
+    { key:"expiringContracts", label:"Expiring Contracts (<46d)", value: expiringContracts, color:"var(--red-text)", change: statChangeHtml(expiringContracts, before.expiringContracts, { upIsGood:false }), desc:"Contracts expiring within 46 days" },
+    { key:"expiringPasses", label:"Expiring Work Passes (<46d)", value: expiringWorkPasses, color:"var(--red-text)", change: statChangeHtml(expiringWorkPasses, before.expiringPasses, { upIsGood:false }), desc:"Work passes expiring within 46 days" },
+    { key:null, label:"Total Monthly Payroll", value: fmtMoney(totalPayroll), color:"var(--green-text)", change: statChangeHtml(totalPayroll, before.payroll, { money:true }), desc:"Sum of everyone's Basic Salary" },
   ];
   const cardFilterMap = {
+    active: { field:"contractStatusTermMain", value: ACTIVE_TALENT_STATUSES },
     pendingStart: { field:"contractStatusTermMain", value:["Pending Start"] },
     noticePeriod: { field:"contractStatusTermMain", value:["Notice Period"] },
-    headcount: { field:"contractStatusTermMain", value:["Active","Eligible for Renewal","Requires Renewal","Notice Period","On Bench"] },
     expiringPasses: { field:"workPassStatusTermMain", value:["Requires Renewal"] },
     expiringContracts: { field:"contractStatusTermMain", value:["Requires Renewal"] },
   };
@@ -944,9 +1009,9 @@ function renderStatsInner(){
     }
     return `
     <div class="stat-card ${c.key?'stat-card-clickable':''} rounded-lg px-4 py-3 ${active?'stat-card-clickable-active':''}" ${c.key?`data-card="${c.key}"`:''} title="${c.desc}">
-      <div class="text-xs text-[var(--muted)] mb-1">${c.label}</div>
-      <div class="text-xl font-bold" style="color:${c.color}">${c.value}</div>
-      ${homeTrend(c.trend, "vs last month")}
+      <div class="text-xs ${c.featured?'font-semibold text-[var(--text)]':'text-[var(--muted)]'} mb-1">${c.label}</div>
+      <div class="${c.featured?'text-2xl':'text-xl'} font-bold" style="color:${c.color}">${c.value}</div>
+      ${c.change}
     </div>`;
   }).join('');
 
@@ -7920,7 +7985,7 @@ async function bootstrap(){
     return;
   }
 
-  renderStats();
+  showActiveTalentsByDefault();
   updateSortArrows();
   renderTable();
   updateNavBadges();

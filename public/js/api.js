@@ -106,6 +106,8 @@ const api = {
   },
   dashboard: {
     home: () => request("/dashboard/home"),
+    saveTalentStats: (day, stats) => request(`/dashboard/talent-stats/${day}`, { method: "PUT", body: JSON.stringify(stats) }),
+    talentStatsOnOrBefore: (day) => request(`/dashboard/talent-stats/on-or-before/${day}`),
   },
   lookups: {
     clientNames: () => request("/lookups/client-names"),

@@ -491,3 +491,11 @@ model ChangeLog {
   @@index([createdAt])
   @@index([talentId])
 }
+
+// One row per day with the Talents Overview counts, so the overview can show the change since
+// the same day last month. Written by the Talents page whenever it computes the counts.
+model TalentStatsSnapshot {
+  day       String   @id // YYYY-MM-DD, Singapore date
+  stats     Json     // { active, total, pendingStart, noticePeriod, expiringContracts, expiringPasses, payroll }
+  updatedAt DateTime @updatedAt
+}
