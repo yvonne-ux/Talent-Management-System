@@ -879,6 +879,9 @@ document.getElementById('sidebarToggleBtn').addEventListener('click', ()=>{
 /* Contract statuses that count as a current active talent: started, still under contract and
    working (not Pending Start, On Bench, Contract Ended, Inactive or Offboarded). */
 const ACTIVE_TALENT_STATUSES = ["Active","Eligible for Renewal","Requires Renewal","Notice Period"];
+function isCurrentActiveTalent(c){ return ACTIVE_TALENT_STATUSES.includes(contractStatusDisplay(c).label); }
+/* Everyone else, so Current Active Talents + Not Active = Total Talents. */
+const NOT_ACTIVE_TALENT_STATUSES = ["Pending Start","On Bench","Contract Ended","Inactive","Offboarded"];
 
 /* Change since last month: the counts are saved once a day (TalentStatsSnapshot) and compared with
    the latest day saved on or before the same date last month. */
@@ -974,7 +977,14 @@ function renderStatsInner(){
   const total = talents.length;
   const pendingStart = talents.filter(c=>contractStatusDisplay(c).label === "Pending Start").length;
   const noticePeriod = talents.filter(c=>contractStatusDisplay(c).label === "Notice Period").length;
-  const activeTalents = talents.filter(c=>ACTIVE_TALENT_STATUSES.includes(contractStatusDisplay(c).label)).length;
+  const activeTalents = talents.filter(isCurrentActiveTalent).length;
+  const notActiveTalents = total - activeTalents;
+  const notActiveByReason = {};
+  talents.forEach(c=>{
+    const label = contractStatusDisplay(c).label;
+    if(!ACTIVE_TALENT_STATUSES.includes(label)) notActiveByReason[label] = (notActiveByReason[label]||0) + 1;
+  });
+  const notActiveBreakdown = NOT_ACTIVE_TALENT_STATUSES.filter(l=>notActiveByReason[l]).map(l=>`${notActiveByReason[l]} ${l}`).join(' · ');
   const expiringContracts = talents.filter(c=>!contractClosed(c) && c.contractDaysLeft < 46).length;
   const expiringWorkPasses = talents.filter(c=>!passClosed(c) && c.passDaysLeft !== null && c.passDaysLeft < 46).length;
   const approachingExpiries = urgentNotificationsCount(collectUrgentNotifications());
@@ -991,10 +1001,14 @@ function renderStatsInner(){
     { key:"noticePeriod", label:"Serving Notice Period", value: noticePeriod, color:"#7A4A1E", change: statChangeHtml(noticePeriod, before.noticePeriod, { upIsGood:false }), desc:"Talents flagged as being in their contract notice period" },
     { key:"expiringContracts", label:"Expiring Contracts (<46d)", value: expiringContracts, color:"var(--red-text)", change: statChangeHtml(expiringContracts, before.expiringContracts, { upIsGood:false }), desc:"Contracts expiring within 46 days" },
     { key:"expiringPasses", label:"Expiring Work Passes (<46d)", value: expiringWorkPasses, color:"var(--red-text)", change: statChangeHtml(expiringWorkPasses, before.expiringPasses, { upIsGood:false }), desc:"Work passes expiring within 46 days" },
+    { key:"notActive", label:"Not Active", value: notActiveTalents, color:"var(--muted)",
+      change: statChangeHtml(notActiveTalents, (before.total !== undefined && before.active !== undefined) ? before.total - before.active : undefined, { upIsGood:false }),
+      detail: notActiveBreakdown, desc:"Talents not counted as active: Pending Start, On Bench, Contract Ended (incl. expired or terminated), Inactive or Offboarded. Click to list them; the Contract Status column shows why." },
     { key:null, label:"Total Monthly Payroll", value: fmtMoney(totalPayroll), color:"var(--green-text)", change: statChangeHtml(totalPayroll, before.payroll, { money:true }), desc:"Sum of everyone's Basic Salary" },
   ];
   const cardFilterMap = {
     active: { field:"contractStatusTermMain", value: ACTIVE_TALENT_STATUSES },
+    notActive: { field:"contractStatusTermMain", value: NOT_ACTIVE_TALENT_STATUSES },
     pendingStart: { field:"contractStatusTermMain", value:["Pending Start"] },
     noticePeriod: { field:"contractStatusTermMain", value:["Notice Period"] },
     expiringPasses: { field:"workPassStatusTermMain", value:["Requires Renewal"] },
@@ -1014,6 +1028,7 @@ function renderStatsInner(){
       <div class="text-xs ${c.featured?'font-semibold text-[var(--text)]':'text-[var(--muted)]'} mb-1">${c.label}</div>
       <div class="${c.featured?'text-2xl':'text-xl'} font-bold" style="color:${c.color}">${c.value}</div>
       ${c.change}
+      ${c.detail ? `<div class="text-[11px] mt-0.5 text-[var(--muted)]">${c.detail}</div>` : ''}
     </div>`;
   }).join('');
 
@@ -5346,7 +5361,8 @@ function computeClientMetrics(client){
   const grossProfit = monthlyRevenue - monthlyCost;
   const grossMargin = monthlyRevenue ? (grossProfit/monthlyRevenue)*100 : 0;
   const projectGp = projectRevenue - projectCost;
-  return { count: group.length, monthlyRevenue, monthlyCost, grossProfit, grossMargin, projectRevenue, projectCost, projectGp, workPassAdminFee };
+  // count is current active talents only (Clients tab shows how active talents are spread across clients).
+  return { count: group.filter(isCurrentActiveTalent).length, monthlyRevenue, monthlyCost, grossProfit, grossMargin, projectRevenue, projectCost, projectGp, workPassAdminFee };
 }
 
 /* ---------- CLIENTS ---------- */
@@ -5420,7 +5436,7 @@ function initClientsFilters(){
       { label: 'Contact Number', value: r=>r.contactNumber },
       { label: 'Account Manager', value: r=>r.accountManager },
       { label: 'Status', value: r=>r.status },
-      { label: 'Talent Count', value: r=>r.talentCount },
+      { label: 'Active Talents', value: r=>r.talentCount },
     ], lastClientsRows, format);
   }
   document.getElementById('confirmExportClientsBtn').addEventListener('click', ()=>{
@@ -5444,12 +5460,13 @@ function renderClients(){
   initCosmeticMonthFilter('clientsStatsMonthFilter', ()=> renderClients());
 
   const activeCount = clients.filter(c=>clientProfiles[c].status==="Active").length;
-  const totalTalents = talents.length;
+  const activeTalents = talents.filter(isCurrentActiveTalent);
+  const totalActiveTalents = activeTalents.length;
   const totalGp = clients.reduce((s,c)=>s+computeClientMetrics(c).grossProfit, 0);
   document.getElementById('clientsStatCards').innerHTML = [
     { key:"all", label:"Total Clients", value: clients.length, color:"var(--text)" },
     { key:"active", label:"Active Clients", value: activeCount, color:"var(--blue-dark)" },
-    { key:"talents", label:"Total Talents", value: totalTalents, color:"var(--text)" },
+    { key:"talents", label:"Current Active Talents", value: totalActiveTalents, color:"var(--green-text)" },
     { key:"gp", label:"Total Gross Profit", value: fmtMoney(totalGp), color: totalGp>=0 ? "var(--green-text)" : "var(--red-text)" },
   ].map(c=>{
     const active = (c.key==="active" && clientsStatusTerm.includes("Active"))
@@ -5475,6 +5492,7 @@ function renderClients(){
         clientsPage = 1;
         renderClients();
       } else if(key === "talents"){
+        showActiveTalentsByDefault();
         switchView('talents');
       } else if(key === "gp"){
         switchView('analytics');
@@ -5484,7 +5502,7 @@ function renderClients(){
 
   let rows = clients.map(client=>{
     const p = clientProfiles[client];
-    const talentCount = talents.filter(c=>c.client===client).length;
+    const talentCount = activeTalents.filter(c=>c.client===client).length;
     return { client, ...p, talentCount };
   }).filter(r=>{
     if(clientsSearchTerm && !r.client.toLowerCase().includes(clientsSearchTerm.toLowerCase())) return false;
@@ -5533,7 +5551,7 @@ function renderClients(){
         <td class="px-4 py-1 whitespace-nowrap">${dash(r.contactEmail)}</td>
         <td class="px-4 py-1 whitespace-nowrap">${dash(r.contactNumber)}</td>
         <td class="px-4 py-1 whitespace-nowrap">${dash(r.accountManager)}</td>
-        <td class="px-4 py-1 whitespace-nowrap">${r.talentCount}</td>
+        <td class="px-4 py-1 whitespace-nowrap">${r.talentCount}${r.talentCount && totalActiveTalents ? ` <span class="text-[var(--muted)]">· ${Math.round(r.talentCount / totalActiveTalents * 100)}%</span>` : ''}</td>
         <td class="px-4 py-1 whitespace-nowrap"><span class="pill" style="background:${statusBg};color:${statusText}">${r.status}</span></td>
       </tr>`;
   }).join('');
@@ -6950,7 +6968,7 @@ function openClientViewModal(client){
     dlRow("Contact Email", p.contactEmail),
     dlRow("Contact Number", p.contactNumber),
     dlRow("Account Manager", p.accountManager),
-    dlRow("No. of Talents", talents.filter(c=>c.client===client).length),
+    dlRow("Active Talents", talents.filter(c=>c.client===client && isCurrentActiveTalent(c)).length),
   ].join('');
   clientViewContent.classList.remove('hidden');
   clientEditForm.classList.add('hidden');
@@ -7084,7 +7102,7 @@ function renderAnalytics(){
   const totalAdminFee = allClientData.reduce((s,{m})=>s+m.workPassAdminFee, 0);
   document.getElementById('analyticsOverviewStats').innerHTML = [
     { key:"clients", label:"Active Clients", value: clients.length, color:"var(--blue-dark)", clickable:true },
-    { key:"talents", label:"Total Talents", value: totalTalents, color:"var(--text)", clickable:true },
+    { key:"talents", label:"Current Active Talents", value: totalTalents, color:"var(--green-text)", clickable:true },
     { key:"revenue", label:"Total Monthly Revenue", value: fmtMoney(totalRevenue), color:"var(--text)", clickable:false },
     { key:"gp", label:"Total Gross Profit", value: fmtMoney(totalGp), color: totalGp>=0 ? "var(--green-text)" : "var(--red-text)", clickable:false },
     { key:"margin", label:"Overall GP Margin %", value: overallMargin.toFixed(1)+"%", color:"var(--amber-text)", clickable:false },
@@ -7099,7 +7117,7 @@ function renderAnalytics(){
     card.addEventListener('click', ()=>{
       const key = card.dataset.card;
       if(key === "clients") switchView('clients');
-      if(key === "talents") switchView('talents');
+      if(key === "talents"){ showActiveTalentsByDefault(); switchView('talents'); }
     });
   });
 
@@ -7125,7 +7143,7 @@ function renderAnalytics(){
           <span class="font-bold text-lg flex items-center gap-3 flex-wrap">
             <svg class="an-chevron w-5 h-5 transition-transform duration-150 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
             ${client}
-            <span class="text-base text-[var(--muted)] font-normal">${m.count} talent${m.count===1?'':'s'}</span>
+            <span class="text-base text-[var(--muted)] font-normal">${m.count} active talent${m.count===1?'':'s'}</span>
             <span class="pill" style="background:${gpColor};color:${gpText}">GP ${fmtMoney(m.grossProfit)}</span>
           </span>
         </button>
