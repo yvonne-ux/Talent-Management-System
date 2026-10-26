@@ -42,4 +42,27 @@ export async function applyAutoTalentStatuses(talentId?: number) {
     await prisma.talent.update({ where: { id: t.id }, data: { talentStatus: next } });
     await logChanges(t.id, "personal", [{ field: "Talent status", fromValue: t.talentStatus, toValue: next }], { source: "auto" });
   }
+  await untagLeftTalents(talentId);
+}
+
+// Only Active talents sit under a client: On Bench, Inactive and Offboarded talents are not on a
+// client's project, so their client and project are cleared. They are kept as lastClient /
+// lastProjectType so the profile and lists can still show where the talent was last placed.
+const UNTAGGED_STATUSES = ["On Bench", "Inactive", "Offboarded"];
+
+async function untagLeftTalents(talentId?: number) {
+  const talents = await prisma.talent.findMany({
+    where: { talentStatus: { in: UNTAGGED_STATUSES }, clientId: { not: null }, ...(talentId !== undefined ? { id: talentId } : {}) },
+    select: { id: true, client: { select: { name: true } }, projectType: { select: { name: true } } },
+  });
+  for (const t of talents) {
+    const project = t.projectType?.name ?? null;
+    await prisma.talent.update({
+      where: { id: t.id },
+      data: { clientId: null, projectTypeId: null, lastClient: t.client?.name ?? null, lastProjectType: project },
+    });
+    const changes = [{ field: "Client", fromValue: t.client?.name ?? null, toValue: null }];
+    if (project) changes.push({ field: "Project type", fromValue: project, toValue: null });
+    await logChanges(t.id, "personal", changes, { source: "auto" });
+  }
 }

@@ -103,6 +103,8 @@ let nextId = 1;
 let renewalActionSeq = 0;
 
 function computeDerived(c){
+  // On Bench/Inactive/Offboarded talents (and some imports) have no client: show a blank cell, not "null".
+  if(c.client === null || c.client === undefined) c.client = '';
   c.contractDaysLeft = Math.ceil((c.contractEnd - today) / 86400000);
   // passExpiry is null for talents with no work pass on file (workPassType "Not Applicable",
   // or no WorkPass record at all) — leave passDaysLeft null rather than computing garbage
@@ -1116,7 +1118,7 @@ function renderTable(){
               <span class="name-text">${c.name}</span>
             </div>
           </td>
-          <td class="px-4 py-1 text-[var(--muted)] whitespace-nowrap">${c.client}</td>
+          <td class="px-4 py-1 text-[var(--muted)] whitespace-nowrap">${clientCell(c)}</td>
           <td class="px-4 py-1 whitespace-nowrap">${passTypeLabel(c)}</td>
           <td class="px-4 py-1 whitespace-nowrap ${!isCitizenOrPR && c.passDaysLeft<=30?'date-alert':''}">${passExpiryDisplay}</td>
           <td class="px-4 py-1 whitespace-nowrap"><span class="pill" style="${passBucket.style}">${passBucket.label}</span></td>
@@ -1181,7 +1183,7 @@ function renderHeaderSearchResults(term){
       html += talentMatches.map(c=>`
         <div class="header-search-result header-search-talent px-4 py-2.5 text-sm cursor-pointer hover:bg-[#F8FAFC] border-b border-[var(--border)]" data-id="${c.id}">
           <div class="font-medium">${c.name}</div>
-          <div class="text-xs text-[var(--muted)]">${c.client} · ${dash(c.projectType)}</div>
+          <div class="text-xs text-[var(--muted)]">${c.client ? `${c.client} · ${dash(c.projectType)}` : (lastPlacementText(c) || '-')}</div>
         </div>`).join('');
     }
     if(clientMatches.length){
@@ -2447,13 +2449,24 @@ function daysHint(d, pastWord){
   if(d === 0) return 'today';
   return `${d} day${d===1?'':'s'} left`;
 }
+/* Untagged talents (On Bench / Inactive / Offboarded) have no client: show where they were last placed. */
+function lastPlacementText(c){
+  if(c.client || !c.lastClient) return '';
+  return `Last: ${c.lastClient}${c.lastProjectType ? ' · ' + c.lastProjectType : ''}`;
+}
+// List cell for a talent's client: an untagged talent shows where they were last placed.
+function clientCell(c){
+  return c.client ? escHtml(c.client) : (c.lastClient ? `<span class="italic">was ${escHtml(c.lastClient)}</span>` : '');
+}
 function renderProfileFacts(c){
   const lifetime = !c.workPassType || ["Singapore Citizen","PR"].includes(c.workPassType);
   const passColor = !lifetime && c.passDaysLeft !== null && c.passDaysLeft <= 30 ? 'var(--red-text)' : '';
   const passValue = lifetime ? escHtml(passTypeLabel(c)) : `${escHtml(c.workPassType)}${c.passDaysLeft !== null && c.passDaysLeft < 0 ? ' · expired' : ''}`;
   const contractColor = c.contractDaysLeft <= 30 ? 'var(--red-text)' : '';
   let html =
-    profileFact('Placement', escHtml(c.client), escHtml(dash(c.projectType))) +
+    (c.client || !c.lastClient
+      ? profileFact('Placement', escHtml(c.client), escHtml(dash(c.projectType)))
+      : profileFact('Placement', 'No client', escHtml(lastPlacementText(c)))) +
     profileFact('Work pass', passValue, lifetime ? 'no renewal needed' : (c.passExpiry ? `${fmtDate(c.passExpiry)} · ${daysHint(c.passDaysLeft, 'expired')}` : ''), passColor) +
     profileFact('Contract', c.contractStart > today ? `Starts ${fmtDate(c.contractStart)}` : `${c.contractDaysLeft < 0 ? 'Ended' : 'Until'} ${fmtDate(c.contractEnd)}`, daysHint(c.contractDaysLeft, 'ended'), contractColor);
   if(canViewFinancials){
@@ -2607,6 +2620,7 @@ function renderTalentProfile(c){
     dlRow("Job Title", c.jobTitle),
     dlRow("Client", c.client),
     dlRow("Project Type", c.projectType),
+    ...(lastPlacementText(c) ? [dlRow("Last Client", c.lastClient), dlRow("Last Project Type", c.lastProjectType)] : []),
     dlRow("Date of Commencement", fmtDate(c.contractStart)),
     dlRow("Date of Expiry", `<span class="${contractAlert?'date-alert':''}">${fmtDate(c.contractEnd)}</span>`),
     dlRow("Days Left to Expiry", `<span class="${contractAlert?'date-alert':''}">${c.contractDaysLeft<0?`${Math.abs(c.contractDaysLeft)}d overdue`:`${c.contractDaysLeft}d`}</span>`),
@@ -3409,7 +3423,7 @@ function collectHomeTodos(){
     }
     // Offboarded talents are removed from the system by hand: keep a reminder until they are.
     if(isOffboarded(c)){
-      items.push({ kind:'remove', days:0, id:c.id, tab:'personal', title:`${c.name} · offboarded`, sub:`${c.client} · remove from the system when you're ready` });
+      items.push({ kind:'remove', days:0, id:c.id, tab:'personal', title:`${c.name} · offboarded`, sub:'No longer with a client · remove from the system when you\'re ready' });
       return;
     }
     const lifetimePass = !c.workPassType || ["Singapore Citizen","PR"].includes(c.workPassType);
@@ -4039,7 +4053,7 @@ function renderWorkpassTable(){
             <span class="wptable-name-link cursor-pointer hover:underline hover:text-[var(--blue-dark)]" data-id="${c.id}">${c.name}</span>
           </td>
           <td class="px-4 py-1 text-[var(--muted)] whitespace-nowrap">${workpassFinNo(c)}</td>
-          <td class="px-4 py-1 text-[var(--muted)] whitespace-nowrap">${c.client}</td>
+          <td class="px-4 py-1 text-[var(--muted)] whitespace-nowrap">${clientCell(c)}</td>
           <td class="px-4 py-1 whitespace-nowrap">${passTypeLabel(c)}</td>
           <td class="px-4 py-1 whitespace-nowrap">${isCitizenOrPR ? 'N/A' : fmtDate(c.passIssueDate)}</td>
           <td class="px-4 py-1 whitespace-nowrap ${!isCitizenOrPR && c.passDaysLeft<=30?'date-alert':''}">${isCitizenOrPR ? 'N/A' : fmtDate(c.passExpiry)}</td>
@@ -4275,7 +4289,7 @@ function renderContracts(){
       <td class="px-4 py-1 font-medium whitespace-nowrap">
         <span class="contract-name-link cursor-pointer hover:underline hover:text-[var(--blue-dark)]" data-id="${c.id}">${c.name}</span>
       </td>
-      <td class="px-4 py-1 text-[var(--muted)] whitespace-nowrap">${c.client}</td>
+      <td class="px-4 py-1 text-[var(--muted)] whitespace-nowrap">${clientCell(c)}</td>
       <td class="px-4 py-1 whitespace-nowrap">${fmtDate(c.contractStart)}</td>
       <td class="px-4 py-1 whitespace-nowrap ${c.contractDaysLeft<=30?'date-alert':''}">${fmtDate(c.contractEnd)}</td>
       <td class="px-4 py-1 whitespace-nowrap ${c.contractDaysLeft<=30?'date-alert':''}">${c.contractDaysLeft<0?`${Math.abs(c.contractDaysLeft)}d overdue`:`${c.contractDaysLeft}d`}</td>
@@ -5048,7 +5062,7 @@ function renderOperations(){
       <td class="px-4 py-1 font-medium whitespace-nowrap">
         <span class="leave-name-link cursor-pointer hover:underline hover:text-[var(--blue-dark)]" data-id="${c.id}">${c.name}</span>
       </td>
-      <td class="px-4 py-1 text-[var(--muted)] whitespace-nowrap">${c.client}</td>
+      <td class="px-4 py-1 text-[var(--muted)] whitespace-nowrap">${clientCell(c)}</td>
       <td class="px-4 py-1 whitespace-nowrap">${c.annualLeaveBalance} days</td>
       <td class="px-4 py-1 whitespace-nowrap">${c.sickLeaveBalance} days</td>
       <td class="px-4 py-1 whitespace-nowrap">${c.offInLieuBalance} days</td>
@@ -7702,7 +7716,7 @@ function renderOffboarding(){
         <td class="px-4 py-1 font-medium whitespace-nowrap">
           <span class="offboard-name-link cursor-pointer hover:underline hover:text-[var(--blue-dark)]" data-id="${c.id}">${c.name}</span>
         </td>
-        <td class="px-4 py-1 text-[var(--muted)] whitespace-nowrap">${c.client}</td>
+        <td class="px-4 py-1 text-[var(--muted)] whitespace-nowrap">${clientCell(c)}</td>
         <td class="px-4 py-1 whitespace-nowrap date-alert">${fmtDate(c.lastWorkingDay)}</td>
         <td class="px-4 py-1 whitespace-nowrap"><span class="pill" style="${statusPillStyle(c.noticeServed)}">${c.noticeServed}</span></td>
         <td class="px-4 py-1 whitespace-nowrap"><span class="pill" style="${statusPillStyle(c.clientNotified)}">${c.clientNotified}</span></td>
