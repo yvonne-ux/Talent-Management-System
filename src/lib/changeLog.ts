@@ -162,7 +162,7 @@ export function diffFields(section: string, before: Record<string, unknown> | nu
 
 export interface ChangeContext {
   userId?: string;
-  source?: "manual" | "import" | "backfill";
+  source?: "manual" | "import" | "backfill" | "auto";
 }
 
 /** Writes change-log rows for one talent: either a list of field changes (action "updated")

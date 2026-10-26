@@ -7,6 +7,7 @@ import { RENEWAL_THRESHOLDS } from "../../config/businessRules";
 import { talentInclude } from "../talents/serialize";
 import { canViewFinancialsForRequest } from "../../lib/permissions";
 import { applyDueChanges } from "../../lib/costChanges";
+import { applyAutoTalentStatuses } from "../../lib/talentStatus";
 
 export const dashboardRouter = Router();
 dashboardRouter.use(requireAuth);
@@ -16,6 +17,7 @@ dashboardRouter.get(
   asyncHandler(async (req, res) => {
     const today = new Date();
     await applyDueChanges();
+    await applyAutoTalentStatuses();
     const talents = await prisma.talent.findMany({ where: { active: true }, include: talentInclude });
 
     let pendingStart = 0;
@@ -28,7 +30,7 @@ dashboardRouter.get(
     let monthlyCost = 0;
 
     for (const t of talents) {
-      // Closed contracts/passes (Offboarded, On Bench, Contract Ended, pass Cancelled) are not counted as expiring.
+      // Closed contracts/passes (Inactive, Offboarded, On Bench, Contract Ended, pass Cancelled) are not counted as expiring.
       const contractClosed = isContractClosed(t.talentStatus, t.contract?.contractStatus, t.contract?.contractLifecycleStatus);
       const passClosed = isPassClosed(t.talentStatus, t.workPass?.passStatus, t.workPass?.passLifecycleStatus);
       const contractDaysLeftValue = t.contract ? daysLeft(t.contract.contractEnd, today) : null;
@@ -44,8 +46,8 @@ dashboardRouter.get(
       }
       if (passDaysLeftValue !== null && passDaysLeftValue >= 0 && passDaysLeftValue <= RENEWAL_THRESHOLDS.homeDashboardExpiringDays) expiringWorkPasses++;
 
-      // Offboarded talents are neither paid nor billed; On Bench talents are paid but not billed.
-      if (t.payroll && t.talentBilling && t.workPass && t.talentStatus !== "Offboarded") {
+      // Inactive and Offboarded talents are neither paid nor billed; On Bench talents are paid but not billed.
+      if (t.payroll && t.talentBilling && t.workPass && t.talentStatus !== "Offboarded" && t.talentStatus !== "Inactive") {
         if (t.talentStatus !== "On Bench") monthlyRevenue += talentRevenue(t.talentBilling.chargeRate, t.talentBilling.billingType);
         monthlyCost += totalEmployerCost(t.payroll, t.workPass.workPassType, t.contract?.contractStart, today);
       }

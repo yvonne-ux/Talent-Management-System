@@ -76,6 +76,7 @@ export function serializeTalent(t: TalentWithRelations, canViewFinancials = true
     skillset: fromJson<string[]>(t.skillset, []),
     workLocation: t.workLocation,
     talentStatus: t.talentStatus,
+    talentStatusAuto: t.talentStatusAuto,
 
     client: t.client?.name ?? null,
     clientId: t.clientId,
