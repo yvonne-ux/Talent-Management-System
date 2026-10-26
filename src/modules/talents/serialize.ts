@@ -77,6 +77,8 @@ export function serializeTalent(t: TalentWithRelations, canViewFinancials = true
     workLocation: t.workLocation,
     talentStatus: t.talentStatus,
     talentStatusAuto: t.talentStatusAuto,
+    lastClient: t.lastClient,
+    lastProjectType: t.lastProjectType,
 
     client: t.client?.name ?? null,
     clientId: t.clientId,

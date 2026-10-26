@@ -111,6 +111,10 @@ model Talent {
   // true: talentStatus follows the contract and work pass (see src/lib/talentStatus.ts);
   // false: someone picked the status by hand and the automatic rules leave it alone.
   talentStatusAuto Boolean @default(true)
+  // Client and project the talent was last placed with, kept when they are untagged
+  // (On Bench / Inactive / Offboarded talents no longer sit under a client).
+  lastClient       String?
+  lastProjectType  String?
 
   clientId      String?
   client        Client?      @relation(fields: [clientId], references: [id])
