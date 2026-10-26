@@ -10,6 +10,7 @@ import { canViewFinancialsForRequest } from "../../lib/permissions";
 import { isCpfEligible } from "../../lib/computed";
 import { diffFields, logChanges, FieldChange } from "../../lib/changeLog";
 import { recordSalaryChange } from "../../lib/salaryChanges";
+import { applyAutoTalentStatuses } from "../../lib/talentStatus";
 import { applyDueChanges, importCostChanges, CostImportRow, recordCostChange, CostValues, PAYROLL_COST_FIELDS, COST_FIELD_LABELS } from "../../lib/costChanges";
 
 export const talentsRouter = Router();
@@ -20,6 +21,7 @@ talentsRouter.get(
   asyncHandler(async (req, res) => {
     const includeInactive = req.query.includeInactive === "true";
     await applyDueChanges();
+    await applyAutoTalentStatuses();
     const talents = await prisma.talent.findMany({
       where: includeInactive ? {} : { active: true },
       include: talentInclude,
@@ -35,6 +37,7 @@ talentsRouter.get(
   asyncHandler(async (req, res) => {
     const id = Number(req.params.id);
     await applyDueChanges();
+    await applyAutoTalentStatuses(id);
     const talent = await prisma.talent.findUnique({ where: { id }, include: talentInclude });
     if (!talent) return void res.status(404).json({ error: "Talent not found" });
     res.json(serializeTalent(talent, await canViewFinancialsForRequest(req)));
@@ -354,7 +357,11 @@ talentsRouter.post(
   })
 );
 
+const TALENT_STATUSES = ["Active", "On Bench", "Inactive", "Offboarded"];
+
 async function reserialize(id: number, req: import("express").Request) {
+  // A changed contract or work pass can move a talent on Automatic to another status straight away.
+  await applyAutoTalentStatuses(id);
   const talent = await prisma.talent.findUniqueOrThrow({ where: { id }, include: talentInclude });
   return serializeTalent(talent, await canViewFinancialsForRequest(req));
 }
@@ -370,8 +377,14 @@ talentsRouter.patch(
     });
 
     const data: Record<string, unknown> = {};
-    for (const key of ["firstName", "lastName", "nric", "talentStatus", "sex", "nationality", "maritalStatus", "address", "contactNumber", "email", "bankAccount", "jobTitle", "workLocation"]) {
+    for (const key of ["firstName", "lastName", "nric", "sex", "nationality", "maritalStatus", "address", "contactNumber", "email", "bankAccount", "jobTitle", "workLocation"]) {
       if (key in b) data[key] = b[key];
+    }
+    // "Automatic" hands the status back to the rules; any other choice is kept until switched back.
+    if (b.talentStatus === "Automatic") data.talentStatusAuto = true;
+    else if (typeof b.talentStatus === "string" && TALENT_STATUSES.includes(b.talentStatus)) {
+      data.talentStatus = b.talentStatus;
+      data.talentStatusAuto = false;
     }
     if ("dependants" in b) data.dependants = b.dependants === null ? null : Number(b.dependants);
     if ("dateOfBirth" in b) data.dateOfBirth = b.dateOfBirth ? new Date(b.dateOfBirth as string) : null;

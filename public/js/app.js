@@ -59,7 +59,12 @@ function getWorkPassAdminFee(c, month = today){ return isJoinMonth(c, month) ? o
 const sowStatuses = ["Signed","Pending","Drafted"];
 const poStatuses = ["Received","Raised","Pending"];
 const contractStatusOptions = ["Drafted","Pending Signature","Signed","Expired","Contract Ended","Terminated"];
-const talentStatusOptions = ["Active","On Bench","Offboarded"];
+const talentStatusOptions = ["Active","On Bench","Inactive","Offboarded"];
+/* Talent Status choices in edit forms: "Automatic" lets the contract and work pass decide (server rules in
+   src/lib/talentStatus.ts); picking a status by hand keeps it until switched back to Automatic. */
+const talentStatusChoices = ["Automatic", ...talentStatusOptions];
+function talentStatusChoice(c){ return c.talentStatusAuto === false ? (c.talentStatus || "Active") : "Automatic"; }
+function talentStatusText(c){ return `${c.talentStatus || "Active"}${c.talentStatusAuto === false ? '' : ' (automatic)'}`; }
 const noticePeriods = ["2 weeks","1 month","2 months","3 months"];
 const uploadStatuses = ["Uploaded","Not Uploaded"];
 const signedUploadStatuses = ["Uploaded","Pending"];
@@ -109,17 +114,19 @@ function computeDerived(c){
 }
 
 /* Closing a talent's contract or pass stops it being flagged for renewal anywhere (Renewal Centre,
-   Home to-dos, notifications, the renewal panel). Offboarded closes everything; On Bench closes
+   Home to-dos, notifications, the renewal panel). Inactive and Offboarded close everything; On Bench closes
    the client contract only; Contract Status "Contract Ended"/"Terminated" and Pass Status
    "Cancelled" close just that record. "Inactive" is the older manual override for the same thing. */
 const ENDED_CONTRACT_STATUSES = ["Contract Ended","Terminated"];
 function isOffboarded(c){ return c.talentStatus === "Offboarded"; }
+// Inactive and Offboarded talents have left: no flags, no payroll, no billing.
+function hasLeft(c){ return c.talentStatus === "Offboarded" || c.talentStatus === "Inactive"; }
 function isOnBench(c){ return c.talentStatus === "On Bench"; }
 function contractClosed(c){
-  return isOffboarded(c) || isOnBench(c) || ENDED_CONTRACT_STATUSES.includes(c.contractStatus) || c.contractLifecycleStatus === "Inactive";
+  return hasLeft(c) || isOnBench(c) || ENDED_CONTRACT_STATUSES.includes(c.contractStatus) || c.contractLifecycleStatus === "Inactive";
 }
 function passClosed(c){
-  return isOffboarded(c) || c.passStatus === "Cancelled" || c.passLifecycleStatus === "Inactive";
+  return hasLeft(c) || c.passStatus === "Cancelled" || c.passLifecycleStatus === "Inactive";
 }
 
 /* Buckets used by the Renewal Centre "Contract Status" column */
@@ -131,7 +138,7 @@ function contractStatusBucket(daysLeft){
 /* Contract Status column: layers Offboarded / On Bench / Contract Ended and the manual "Notice Period" override on top of the
    automatic days-left bucket used elsewhere (Requires Renewal / Eligible for Renewal / Active). */
 function contractStatusDisplay(c){
-  if(isOffboarded(c)) return { label: "Offboarded", style: `background:#E2E5E9;color:#43494F` };
+  if(hasLeft(c)) return { label: c.talentStatus, style: `background:#E2E5E9;color:#43494F` };
   if(isOnBench(c)) return { label: "On Bench", style: `background:#EDE7F6;color:#5B3F8C` };
   if(contractClosed(c)) return { label: "Contract Ended", style: `background:#E2E5E9;color:#43494F` };
   if(c.contractLifecycleStatus === "Notice Period") return { label: "Notice Period", style: `background:#F1E4D8;color:#7A4A1E` };
@@ -143,7 +150,7 @@ function contractStatusDisplay(c){
 function passStatusDisplay(c){
   if(!c.workPassType || ["Singapore Citizen","PR"].includes(c.workPassType)) return { label: "N/A", style: naPillStyle };
   if(c.passStatus === "Cancelled" || c.passLifecycleStatus === "Inactive") return { label: "Cancelled", style: `background:#E2E5E9;color:#43494F` };
-  if(isOffboarded(c)) return { label: "Offboarded", style: `background:#E2E5E9;color:#43494F` };
+  if(hasLeft(c)) return { label: c.talentStatus, style: `background:#E2E5E9;color:#43494F` };
   if(c.passLifecycleStatus === "Pending Application") return { label: "Pending Application", style: `background:var(--turquoise-bg);color:var(--turquoise-text)` };
   return contractStatusBucket(c.passDaysLeft);
 }
@@ -262,8 +269,8 @@ function computeTotalPayrollCost(c, month = today){
   // salary is null when the server redacted financial fields for a Standard user without
   // financials access — never fabricate a partial total from just the admin fee in that case.
   if(c.salary === null || c.salary === undefined) return null;
-  // Offboarded talents are no longer paid, so they add nothing to payroll cost.
-  if(isOffboarded(c)) return 0;
+  // Inactive and Offboarded talents are no longer paid, so they add nothing to payroll cost.
+  if(hasLeft(c)) return 0;
   return c.salary + (c.cpf||0) + c.skillsDevelopmentLevy + c.wica + c.medicalInsuranceCost
     + c.allowances + c.claimsReimbursements + c.overtime - c.noPayLeaveDeduction + c.otherStatutoryCosts
     + getWorkPassAdminFee(c, month);
@@ -284,8 +291,8 @@ function weekdaysInMonth(month = today){
 
 function computeTalentRevenue(c, month = today){
   if(c.chargeRate === null || c.chargeRate === undefined) return null;
-  // On Bench and Offboarded talents are not billed to a client.
-  if(isOnBench(c) || isOffboarded(c)) return 0;
+  // On Bench, Inactive and Offboarded talents are not billed to a client.
+  if(isOnBench(c) || hasLeft(c)) return 0;
   return c.billingType === "Daily" ? c.chargeRate * weekdaysInMonth(month) : c.chargeRate;
 }
 
@@ -574,8 +581,8 @@ function createMultiSelect(wrapId, options, placeholder, onChange){
 const msClientFilter = createMultiSelect('clientFilter', [...new Set(clients)].sort(), "All clients", vals=>{ clientTerm=vals; page=1; renderTable(); });
 const msProjectFilter = createMultiSelect('projectFilter', [...new Set(projectTypes)].sort(), "All project types", vals=>{ projectTerm=vals; page=1; renderTable(); });
 const msWorkPassTypeFilterMain = createMultiSelect('workPassTypeFilterMain', [...workPassTypes, "Not Applicable"], "All pass types", vals=>{ workPassTypeTermMain=vals; page=1; renderTable(); });
-const msWorkPassStatusFilterMain = createMultiSelect('workPassStatusFilterMain', ["Requires Renewal","Eligible for Renewal","Active","Pending Application","Cancelled","Offboarded","N/A"], "All pass statuses", vals=>{ workPassStatusTermMain=vals; page=1; renderTable(); });
-const msContractStatusFilterMain = createMultiSelect('contractStatusFilterMain', ["Requires Renewal","Eligible for Renewal","Active","Pending Start","Notice Period","Contract Ended","On Bench","Offboarded"], "All contract statuses", vals=>{ contractStatusTermMain=vals; page=1; renderTable(); });
+const msWorkPassStatusFilterMain = createMultiSelect('workPassStatusFilterMain', ["Requires Renewal","Eligible for Renewal","Active","Pending Application","Cancelled","Inactive","Offboarded","N/A"], "All pass statuses", vals=>{ workPassStatusTermMain=vals; page=1; renderTable(); });
+const msContractStatusFilterMain = createMultiSelect('contractStatusFilterMain', ["Requires Renewal","Eligible for Renewal","Active","Pending Start","Notice Period","Contract Ended","On Bench","Inactive","Offboarded"], "All contract statuses", vals=>{ contractStatusTermMain=vals; page=1; renderTable(); });
 const msOwnerFilterMain = createMultiSelect('ownerFilterMain', [...new Set(caseOwners)].sort(), "All recruiters", vals=>{ ownerTermMain=vals; page=1; renderTable(); });
 const msEntityFilterMain = createMultiSelect('entityFilterMain', [...new Set(entities)].sort(), "All entities", vals=>{ entityTermMain=vals; page=1; renderTable(); });
 fillOptions(document.getElementById('f_client'), [...new Set(clients)].sort(), null);
@@ -2469,7 +2476,7 @@ function renderTalentProfile(c){
   document.getElementById('profilePersonalEditBar').innerHTML = editBarHtml('personal');
   if(profileEditingTabs.has('personal')){
     document.getElementById('profilePersonal').innerHTML = [
-      editSelectRow("Talent Status", "p_talentStatus", talentStatusOptions, c.talentStatus || "Active"),
+      editSelectRow("Talent Status", "p_talentStatus", talentStatusChoices, talentStatusChoice(c)),
       editTextRow("Full Name", "p_name", c.name),
       editDateRow("Date of Birth", "p_dateOfBirth", c.dateOfBirth),
       editSelectRow("Sex", "p_sex", ["Male","Female"], c.sex),
@@ -2486,7 +2493,7 @@ function renderTalentProfile(c){
     ].join('');
   } else {
     document.getElementById('profilePersonal').innerHTML = [
-      dlRow("Talent Status", c.talentStatus || "Active"),
+      dlRow("Talent Status", talentStatusText(c)),
       dlRow("Full Name", c.name),
       dlRow("Date of Birth", fmtDate(c.dateOfBirth)),
       dlRow("Sex", c.sex),
@@ -2750,7 +2757,7 @@ async function saveProfileTab(tabKey, c){
     let updated;
     if(tabKey === 'personal'){
       updated = await api.talents.updatePersonal(c.id, {
-        talentStatus: document.getElementById('p_talentStatus').value || "Active",
+        talentStatus: document.getElementById('p_talentStatus').value || "Automatic",
         name: document.getElementById('p_name').value.trim() || c.name,
         dateOfBirth: document.getElementById('p_dateOfBirth').value || null,
         sex: document.getElementById('p_sex').value || null,
@@ -2910,7 +2917,7 @@ function collectUrgentNotifications(){
     // rather than crashing the whole notifications/stats computation on one bad client.
     sowPending: clients.filter(cl=>clientBilling[cl] && clientBilling[cl].sowStatus !== "Signed"),
     poPending: clients.filter(cl=>clientBilling[cl] && clientBilling[cl].poStatus !== "Received"),
-    // On Bench and Offboarded talents are not working at a client, so no timesheet is due.
+    // On Bench, Inactive and Offboarded talents are not working at a client, so no timesheet is due.
     tsNotSubmitted: talents.filter(c=>!contractClosed(c) && c.timesheetSubmitted === "No"),
     tsNotApproved: talents.filter(c=>!contractClosed(c) && c.timesheetSubmitted === "Yes" && c.clientApproved === "No"),
     invoiceDueSoon: clients.filter(cl=>{
@@ -2920,7 +2927,7 @@ function collectUrgentNotifications(){
       return daysToDue >= 0 && daysToDue <= 14;
     }),
     paymentOverdue: clients.filter(cl=>clientBilling[cl] && clientBilling[cl].invoiceStatus === "Overdue"),
-    insuranceExpired: talents.filter(c=>!isOffboarded(c) && c.medicalInsuranceStatus === "Expired"),
+    insuranceExpired: talents.filter(c=>!hasLeft(c) && c.medicalInsuranceStatus === "Expired"),
     lastWorkingDaySoon: talents.filter(c=>!contractClosed(c) && c.contractDaysLeft >= 0 && c.contractDaysLeft <= 7),
     passCancellationPending: talents.filter(c=>!passClosed(c) && c.contractDaysLeft < 0 && !c.workPassCancellationDate),
   };
@@ -3320,9 +3327,26 @@ function daysFromToday(d){ return d ? Math.ceil((new Date(d) - today) / 86400000
 function isActiveTalent(c){ return !(c.contractStart > today) && c.contractDaysLeft >= 0 && !contractClosed(c); }
 
 /* Everything that needs someone to act on it, soonest first. Items due more than 30 days out are left to the Renewals page. */
+/* Citizens and PRs (and talents with no pass) on Automatic: once the contract is over the rules can't
+   tell whether they are on bench, inactive or leaving, so Home asks the user instead. */
+function contractOver(c){ return c.contractDaysLeft < 0 || ["Expired", ...ENDED_CONTRACT_STATUSES].includes(c.contractStatus); }
+function needsStatusDecision(c){
+  const foreignPass = c.workPassType && !["Singapore Citizen","PR"].includes(c.workPassType);
+  return c.talentStatusAuto !== false && (c.talentStatus || "Active") === "Active" && !foreignPass && contractOver(c);
+}
 function collectHomeTodos(){
   const items = [];
   talents.forEach(c=>{
+    if(needsStatusDecision(c)){
+      items.push({ kind:'status', days:Math.min(c.contractDaysLeft, 0), id:c.id, action:'status',
+        title:`${c.name} · contract ended`, sub:`${c.client} · what's their status now? On Bench, Inactive or Offboarded` });
+      return;
+    }
+    // Offboarded talents are removed from the system by hand: keep a reminder until they are.
+    if(isOffboarded(c)){
+      items.push({ kind:'remove', days:0, id:c.id, tab:'personal', title:`${c.name} · offboarded`, sub:`${c.client} · remove from the system when you're ready` });
+      return;
+    }
     const lifetimePass = !c.workPassType || ["Singapore Citizen","PR"].includes(c.workPassType);
     if(!lifetimePass && c.passDaysLeft !== null && c.passDaysLeft <= 30 && !passClosed(c)){
       const stale = isPassRenewalStale(c);
@@ -3368,7 +3392,7 @@ function collectHomeTodos(){
   return items.sort((a,b)=>a.days-b.days);
 }
 
-const TODO_KIND_LABEL = { pass:'Work pass', contract:'Contract', invoice:'Invoice', sow:'SOW', exit:'Offboarding' };
+const TODO_KIND_LABEL = { pass:'Work pass', contract:'Contract', invoice:'Invoice', sow:'SOW', exit:'Offboarding', status:'Status', remove:'Remove' };
 function todoDueLabel(d){
   if(d < 0) return { text: `${-d} day${d===-1?'':'s'} ago`, color:'var(--red-text)' };
   if(d === 0) return { text:'Today', color:'var(--red-text)' };
@@ -3376,16 +3400,22 @@ function todoDueLabel(d){
   return { text: date, color: d <= 14 ? 'var(--red-text)' : d <= 30 ? 'var(--amber-text)' : 'var(--muted)' };
 }
 function renderHomeTodo(items){
+  // Status questions and removal reminders get their own group at the top so they aren't buried under dated work.
+  const isStatusItem = i => i.kind === 'status' || i.kind === 'remove';
+  const dated = items.filter(i=>!isStatusItem(i));
   const groups = [
-    { key:'overdue', label:'Overdue', rows: items.filter(i=>i.days < 0) },
-    { key:'week', label:'This week', rows: items.filter(i=>i.days >= 0 && i.days <= 7) },
-    { key:'month', label:'Next 30 days', rows: items.filter(i=>i.days > 7) },
+    { key:'status', label:'Update talent status', rows: items.filter(isStatusItem) },
+    { key:'overdue', label:'Overdue', rows: dated.filter(i=>i.days < 0) },
+    { key:'week', label:'This week', rows: dated.filter(i=>i.days >= 0 && i.days <= 7) },
+    { key:'month', label:'Next 30 days', rows: dated.filter(i=>i.days > 7) },
   ];
   const MAX_PER_GROUP = 4;
   const html = groups.filter(g=>g.rows.length).map(g=>{
-    const rows = g.rows.slice(0, MAX_PER_GROUP).map((it,ix)=>{
+    // Every status question is listed: each one needs a person's answer.
+    const shown = g.key === 'status' ? g.rows : g.rows.slice(0, MAX_PER_GROUP);
+    const rows = shown.map((it,ix)=>{
       const due = todoDueLabel(it.days);
-      const target = it.id !== undefined ? `data-id="${it.id}" data-tab="${it.tab}"` : `data-view="${it.view}"`;
+      const target = it.action === 'status' ? `data-status-id="${it.id}"` : it.id !== undefined ? `data-id="${it.id}" data-tab="${it.tab}"` : `data-view="${it.view}"`;
       return `<div class="todo-row">
         <span class="todo-kind k-${it.kind}">${TODO_KIND_LABEL[it.kind]}</span>
         <div class="min-w-0"><div class="font-semibold text-sm truncate">${escHtml(it.title)}</div><div class="text-xs text-[var(--muted)] truncate">${escHtml(it.sub)}</div></div>
@@ -3393,14 +3423,16 @@ function renderHomeTodo(items){
         <button type="button" class="todo-open btn-secondary rounded-md px-2 py-1 text-xs font-semibold" ${target}>Open</button>
       </div>`;
     }).join('');
-    const more = g.rows.length > MAX_PER_GROUP ? `<div class="px-4 py-2 text-xs"><button type="button" class="link" onclick="switchView('renewals')">${g.rows.length - MAX_PER_GROUP} more in Renewals →</button></div>` : '';
+    const more = g.rows.length > shown.length ? `<div class="px-4 py-2 text-xs"><button type="button" class="link" onclick="switchView('renewals')">${g.rows.length - MAX_PER_GROUP} more in Renewals →</button></div>` : '';
     return `<div class="todo-group ${g.key==='overdue'?'overdue':''}">${g.label} <span class="cnt">${g.rows.length}</span></div>${rows}${more}`;
   }).join('');
   const el = document.getElementById('homeTodo');
   el.innerHTML = html || `<div class="px-4 pb-5 pt-2 text-sm text-[var(--muted)]">Nothing due in the next 30 days.</div>`;
   el.querySelectorAll('.todo-open').forEach(btn=>{
     btn.addEventListener('click', ()=>{
-      if(btn.dataset.id){ openTalentProfile(Number(btn.dataset.id), 'home', btn.dataset.tab); }
+      // A status question opens the update panel, which has Talent Status at the top.
+      if(btn.dataset.statusId){ openRenewalUpdateModal(Number(btn.dataset.statusId), 'contract'); }
+      else if(btn.dataset.id){ openTalentProfile(Number(btn.dataset.id), 'home', btn.dataset.tab); }
       else switchView(btn.dataset.view);
     });
   });
@@ -3648,6 +3680,7 @@ function changeRowHtml(g, returnView){
   const byParts = [];
   if(g.by) byParts.push(escHtml(g.by));
   if(g.source === 'import') byParts.push('via import');
+  if(g.source === 'auto') byParts.push('automatically');
   return `<div class="change-row">
     <span class="t">${time}</span>
     ${badge}
@@ -3992,7 +4025,7 @@ updateWorkpassSortArrows();
 document.getElementById('workpassSearchInput').addEventListener('input', e=>{ workpassSearchTerm=e.target.value; workpassPage=1; renderWorkpassTable(); });
 wireClearButton('workpassSearchInput', 'workpassSearchClear', ()=>{ workpassSearchTerm=""; workpassPage=1; renderWorkpassTable(); });
 const msWorkpassType = createMultiSelect('workpassTypeFilter', [...workPassTypes, "Not Applicable"], "All pass types", vals=>{ workpassTypeTerm=vals; workpassPage=1; renderWorkPass(); });
-const msWorkpassStatus = createMultiSelect('workpassStatusFilter', ["Requires Renewal","Eligible for Renewal","Active","Pending Application","Cancelled","Offboarded","N/A"], "All statuses", vals=>{ workpassStatusTerm=vals; workpassPage=1; renderWorkpassTable(); });
+const msWorkpassStatus = createMultiSelect('workpassStatusFilter', ["Requires Renewal","Eligible for Renewal","Active","Pending Application","Cancelled","Inactive","Offboarded","N/A"], "All statuses", vals=>{ workpassStatusTerm=vals; workpassPage=1; renderWorkpassTable(); });
 const msWorkpassRenewalStatus = createMultiSelect('workpassRenewalStatusFilter', ["Yet to Start","In Progress","Completed"], "All renewal statuses", vals=>{ workpassRenewalStatusTerm=vals; workpassPage=1; renderWorkpassTable(); });
 document.getElementById('workpassClearFilters').addEventListener('click', e=>{
   e.preventDefault();
@@ -4038,7 +4071,7 @@ function initContractsFilters(){
   if(contractsFiltersInit) return;
   contractsFiltersInit = true;
   msContractsClient = createMultiSelect('contractsClientFilter', [...new Set(clients)].sort(), "All clients", vals=>{ contractsClientTerm=vals; contractsPage=1; renderContracts(); });
-  msContractsStatus = createMultiSelect('contractsStatusFilter', ["Requires Renewal","Eligible for Renewal","Active","Pending Start","Notice Period","Contract Ended","On Bench","Offboarded"], "All statuses", vals=>{ contractsStatusTerm=vals; contractsPage=1; renderContracts(); });
+  msContractsStatus = createMultiSelect('contractsStatusFilter', ["Requires Renewal","Eligible for Renewal","Active","Pending Start","Notice Period","Contract Ended","On Bench","Inactive","Offboarded"], "All statuses", vals=>{ contractsStatusTerm=vals; contractsPage=1; renderContracts(); });
   const msContractsRenewalStatus = createMultiSelect('contractsRenewalStatusFilter', ["Yet to Start","In Progress","Completed"], "All renewal statuses", vals=>{ contractsRenewalStatusTerm=vals; contractsPage=1; renderContracts(); });
   document.getElementById('contractsSearchInput').addEventListener('input', e=>{
     contractsSearchTerm = e.target.value;
@@ -4099,7 +4132,7 @@ function renderContracts(){
   initContractsFilters();
   initCosmeticMonthFilter('contractsStatsMonthFilter', ()=> renderContracts());
 
-  const contractStatusCounts = { "Requires Renewal":0, "Eligible for Renewal":0, "Active":0, "Pending Start":0, "Notice Period":0, "Contract Ended":0, "On Bench":0, "Offboarded":0 };
+  const contractStatusCounts = { "Requires Renewal":0, "Eligible for Renewal":0, "Active":0, "Pending Start":0, "Notice Period":0, "Contract Ended":0, "On Bench":0, "Inactive":0, "Offboarded":0 };
   talents.forEach(c=>{ const label = contractStatusDisplay(c).label; if(contractStatusCounts[label] !== undefined) contractStatusCounts[label]++; });
   const contractStatusColors = {
     "Requires Renewal": "var(--red-text)",
@@ -4109,6 +4142,7 @@ function renderContracts(){
     "Notice Period": "#7A4A1E",
     "Contract Ended": "#43494F",
     "On Bench": "#5B3F8C",
+    "Inactive": "#6A7280",
     "Offboarded": "#8A9099",
   };
   document.getElementById('contractsStatusStatCards').innerHTML = Object.keys(contractStatusCounts).map(label=>{
@@ -4520,8 +4554,8 @@ function renderFinance(){
   const monthOffset = financeMonthOffset;
 
   let totalSalary=0, totalCpf=0, totalSdl=0, totalWica=0, totalInsurance=0, totalAdminFee=0, totalCost=0, totalRevenue=0;
-  // Offboarded talents are no longer on payroll, so they are left out of the totals and the table.
-  const payrollTalents = talents.filter(c=>!isOffboarded(c));
+  // Inactive and Offboarded talents are no longer on payroll, so they are left out of the totals and the table.
+  const payrollTalents = talents.filter(c=>!hasLeft(c));
   payrollTalents.forEach(c=>{
     const f = financeTalentFigures(c, monthOffset);
     totalSalary += f.salary; totalCpf += f.cpf; totalSdl += f.sdl; totalWica += f.wica;
@@ -5758,7 +5792,7 @@ function renderPolicyTable(){
     }
     if(policySearchTerm && !c.name.toLowerCase().includes(policySearchTerm)) return false;
     if(policyViewMode==='pending'){
-      if(c.policyType === "Not Required" || isOffboarded(c)) return false;
+      if(c.policyType === "Not Required" || hasLeft(c)) return false;
       if(c.policyDaysLeft > 90) return false;
     }
     return true;
@@ -5866,7 +5900,7 @@ document.getElementById('renewalContractSearchClear').addEventListener('click', 
   renewalContractSearchTerm = "";
   renderRenewalContract();
 });
-createMultiSelect('renewalContractStatusFilter', ["Requires Renewal","Eligible for Renewal","Active","Pending Start","Notice Period","Contract Ended","On Bench","Offboarded"], "All contract statuses", vals=>{ renewalContractStatusTerm = vals; renderRenewalContract(); });
+createMultiSelect('renewalContractStatusFilter', ["Requires Renewal","Eligible for Renewal","Active","Pending Start","Notice Period","Contract Ended","On Bench","Inactive","Offboarded"], "All contract statuses", vals=>{ renewalContractStatusTerm = vals; renderRenewalContract(); });
 createMultiSelect('renewalContractRenewalStatusFilter', ["Yet to Start","In Progress","Completed"], "All renewal statuses", vals=>{ renewalContractRenewalStatusTerm = vals; renderRenewalContract(); });
 
 const msRenewalWorkpassType = createMultiSelect('renewalWorkpassTypeFilter', [...new Set(workPassTypes)].filter(t=>!["Singapore Citizen","PR"].includes(t)).sort(), "All work passes", vals=>{ renewalWorkpassTypeTerm = vals; renderRenewalWorkpass(); });
@@ -5876,7 +5910,7 @@ document.getElementById('renewalWorkpassSearchClear').addEventListener('click', 
   renewalWorkpassSearchTerm = "";
   renderRenewalWorkpass();
 });
-createMultiSelect('renewalWorkpassStatusFilter', ["Requires Renewal","Eligible for Renewal","Active","Pending Application","Cancelled","Offboarded"], "All pass statuses", vals=>{ renewalWorkpassStatusTerm = vals; renderRenewalWorkpass(); });
+createMultiSelect('renewalWorkpassStatusFilter', ["Requires Renewal","Eligible for Renewal","Active","Pending Application","Cancelled","Inactive","Offboarded"], "All pass statuses", vals=>{ renewalWorkpassStatusTerm = vals; renderRenewalWorkpass(); });
 createMultiSelect('renewalWorkpassRenewalStatusFilter', ["Yet to Start","In Progress","Completed"], "All renewal statuses", vals=>{ renewalWorkpassRenewalStatusTerm = vals; renderRenewalWorkpass(); });
 
 /* Search + filter state for SOW Renewals and PO Renewals tabs */
@@ -6079,7 +6113,7 @@ function renewalConcerns(c){
       out.renewalStatus = `Work pass renewal ${renewalStatusDisplayLabel(c.renewalStatus || "Not Started").toLowerCase()}`;
     }
   }
-  if(c.policyType && c.policyType !== "Not Required" && !isOffboarded(c)){
+  if(c.policyType && c.policyType !== "Not Required" && !hasLeft(c)){
     if(!c.policyExpiry){
       out.policyExpiry = "No policy expiry date on file";
     } else if(isPolicyRenewalStale(c)){
@@ -6210,9 +6244,10 @@ function ruFieldHtml(f, concern){
 function renderRenewalTalentPanel(c, type){
   const concerns = renewalConcerns(c);
   const sections = renewalTalentSections(c, type);
-  // Talent Status sits above the sections: setting On Bench, Offboarded or an ended contract/pass
+  // Talent Status sits above the sections: setting On Bench, Inactive, Offboarded or an ended contract/pass
   // is usually why someone opens a flagged talent here.
-  const statusField = { key:"talentStatus", label:"Talent Status", kind:"select", options:talentStatusOptions, value:c.talentStatus || "Active", section:"personal" };
+  const statusField = { key:"talentStatus", label:"Talent Status", kind:"select", value:talentStatusChoice(c), section:"personal",
+    options:[{ value:"Automatic", label:`Automatic (now ${c.talentStatus || "Active"})` }, ...talentStatusOptions] };
   ruFields = [statusField, ...sections.flatMap(s=>s.fields.map(f=>({ ...f, section:s.id })))];
   ruInitial = Object.fromEntries(ruFields.map(f=>[f.key, ruFieldValue(f)]));
   ruEffectiveTouched = false;
@@ -6236,7 +6271,7 @@ function renderRenewalTalentPanel(c, type){
 
   const statusRow = `<div class="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
       ${ruFieldHtml(statusField)}
-      <div class="text-xs text-[var(--muted)] pb-1">Contract ended? Set Talent Status to On Bench or Offboarded, or Contract Status to Contract Ended. A cancelled pass: set Pass Status to Cancelled. Either stops the renewal flags.</div>
+      <div class="text-xs text-[var(--muted)] pb-1">On Automatic, an ended contract moves the talent to On Bench, or to Inactive once Pass Status is set to Cancelled. Citizens and PRs: pick their status here when the contract ends.</div>
     </div>`;
   document.getElementById('ru_talentFields').innerHTML = summary + statusRow + sections.map((s, i)=>{
     const sectionConcerns = s.fields.filter(f=>concerns[f.key]).length;
@@ -6429,6 +6464,8 @@ document.getElementById('renewalUpdateForm').addEventListener('submit', async e=
     renderFinance();
     renderStats();
     renderTable();
+    // Opened from a Home to-do (e.g. "what's their status now?"): refresh Home so the item goes away.
+    if(!document.getElementById('view-home').classList.contains('hidden')) renderHome();
     refreshProfileIfOpen(c);
     showToast(`${c.name}'s details updated`, checkIcon);
   }catch(err){
