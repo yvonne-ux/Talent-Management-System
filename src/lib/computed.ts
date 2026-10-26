@@ -7,12 +7,33 @@ export function daysLeft(expiry: Date | null | undefined, today: Date = new Date
   return Math.ceil((expiry.getTime() - today.getTime()) / MS_PER_DAY);
 }
 
+// Mirrors contractClosed()/passClosed() in public/js/app.js: a closed contract or pass is never
+// flagged for renewal. Offboarded closes both; On Bench closes the client contract only.
+const ENDED_CONTRACT_STATUSES = new Set(["Contract Ended", "Terminated"]);
+export function isContractClosed(
+  talentStatus: string | null | undefined,
+  contractStatus: string | null | undefined,
+  lifecycleOverride: string | null | undefined
+): boolean {
+  return talentStatus === "Offboarded" || talentStatus === "On Bench" || ENDED_CONTRACT_STATUSES.has(contractStatus ?? "") || lifecycleOverride === "Inactive";
+}
+export function isPassClosed(
+  talentStatus: string | null | undefined,
+  passStatus: string | null | undefined,
+  lifecycleOverride: string | null | undefined
+): boolean {
+  return talentStatus === "Offboarded" || passStatus === "Cancelled" || lifecycleOverride === "Inactive";
+}
+
 export function contractStatusDisplay(
   contractDaysLeft: number | null,
-  lifecycleOverride: string | null | undefined
+  lifecycleOverride: string | null | undefined,
+  talentStatus?: string | null,
+  contractStatus?: string | null
 ): string {
+  if (talentStatus === "Offboarded" || talentStatus === "On Bench") return talentStatus;
+  if (isContractClosed(talentStatus, contractStatus, lifecycleOverride)) return "Contract Ended";
   if (lifecycleOverride === "Notice Period") return "Notice Period";
-  if (lifecycleOverride === "Inactive") return "Inactive";
   if (contractDaysLeft === null) return "Active";
   return renewalBucket(contractDaysLeft);
 }
@@ -20,11 +41,14 @@ export function contractStatusDisplay(
 export function passStatusDisplay(
   workPassType: string,
   passDaysLeft: number | null,
-  lifecycleOverride: string | null | undefined
+  lifecycleOverride: string | null | undefined,
+  talentStatus?: string | null,
+  passStatus?: string | null
 ): string {
   if (LIFETIME_PASS_TYPES.has(workPassType)) return "N/A";
+  if (passStatus === "Cancelled" || lifecycleOverride === "Inactive") return "Cancelled";
+  if (talentStatus === "Offboarded") return "Offboarded";
   if (lifecycleOverride === "Pending Application") return "Pending Application";
-  if (lifecycleOverride === "Inactive") return "Inactive";
   if (passDaysLeft === null) return "Active";
   return renewalBucket(passDaysLeft);
 }

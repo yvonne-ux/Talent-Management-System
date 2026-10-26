@@ -370,7 +370,7 @@ talentsRouter.patch(
     });
 
     const data: Record<string, unknown> = {};
-    for (const key of ["firstName", "lastName", "nric", "sex", "nationality", "maritalStatus", "address", "contactNumber", "email", "bankAccount", "jobTitle", "workLocation"]) {
+    for (const key of ["firstName", "lastName", "nric", "talentStatus", "sex", "nationality", "maritalStatus", "address", "contactNumber", "email", "bankAccount", "jobTitle", "workLocation"]) {
       if (key in b) data[key] = b[key];
     }
     if ("dependants" in b) data.dependants = b.dependants === null ? null : Number(b.dependants);
