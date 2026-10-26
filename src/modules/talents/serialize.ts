@@ -1,5 +1,5 @@
 import { Prisma } from "@prisma/client";
-import { daysLeft, contractStatusDisplay, passStatusDisplay, isExpiringSoon } from "../../lib/computed";
+import { daysLeft, contractStatusDisplay, passStatusDisplay, isExpiringSoon, isContractClosed, isPassClosed } from "../../lib/computed";
 import { fromJson } from "../../lib/json";
 import { COST_FIELD_LABELS } from "../../lib/costChanges";
 
@@ -51,7 +51,11 @@ export function serializeTalent(t: TalentWithRelations, canViewFinancials = true
   const contractDaysLeftValue = t.contract ? daysLeft(t.contract.contractEnd) : null;
   const passDaysLeftValue = t.workPass ? daysLeft(t.workPass.passExpiry) : null;
   const policyDaysLeftValue = t.insurance ? daysLeft(t.insurance.policyExpiry) : null;
-  const alert = (passDaysLeftValue !== null && passDaysLeftValue <= 30) || (contractDaysLeftValue !== null && contractDaysLeftValue <= 30);
+  const contractClosed = isContractClosed(t.talentStatus, t.contract?.contractStatus, t.contract?.contractLifecycleStatus);
+  const passClosed = isPassClosed(t.talentStatus, t.workPass?.passStatus, t.workPass?.passLifecycleStatus);
+  const alert =
+    (!passClosed && passDaysLeftValue !== null && passDaysLeftValue <= 30) ||
+    (!contractClosed && contractDaysLeftValue !== null && contractDaysLeftValue <= 30);
 
   const result = {
     id: t.id,
@@ -71,6 +75,7 @@ export function serializeTalent(t: TalentWithRelations, canViewFinancials = true
     jobTitle: t.jobTitle,
     skillset: fromJson<string[]>(t.skillset, []),
     workLocation: t.workLocation,
+    talentStatus: t.talentStatus,
 
     client: t.client?.name ?? null,
     clientId: t.clientId,
@@ -221,10 +226,10 @@ export function serializeTalent(t: TalentWithRelations, canViewFinancials = true
     offboardingChecklist: fromJson<{ label: string; status: string }[]>(t.offboarding?.offboardingChecklist ?? null, []),
 
     alert,
-    contractStatusLabel: contractStatusDisplay(contractDaysLeftValue, t.contract?.contractLifecycleStatus),
-    passStatusLabel: t.workPass ? passStatusDisplay(t.workPass.workPassType, passDaysLeftValue, t.workPass.passLifecycleStatus) : null,
-    contractExpiringSoon: isExpiringSoon(contractDaysLeftValue),
-    passExpiringSoon: isExpiringSoon(passDaysLeftValue),
+    contractStatusLabel: contractStatusDisplay(contractDaysLeftValue, t.contract?.contractLifecycleStatus, t.talentStatus, t.contract?.contractStatus),
+    passStatusLabel: t.workPass ? passStatusDisplay(t.workPass.workPassType, passDaysLeftValue, t.workPass.passLifecycleStatus, t.talentStatus, t.workPass.passStatus) : null,
+    contractExpiringSoon: !contractClosed && isExpiringSoon(contractDaysLeftValue),
+    passExpiringSoon: !passClosed && isExpiringSoon(passDaysLeftValue),
   };
 
   if (!canViewFinancials) {

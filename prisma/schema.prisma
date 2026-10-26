@@ -107,6 +107,7 @@ model Talent {
   skillset      String? // JSON-encoded string[]
   workLocation  String?
   active        Boolean @default(true) // soft delete
+  talentStatus  String  @default("Active") // Active / On Bench / Offboarded
 
   clientId      String?
   client        Client?      @relation(fields: [clientId], references: [id])
@@ -143,7 +144,7 @@ model Contract {
 
   contractStart           DateTime
   contractEnd             DateTime
-  contractStatus          String  @default("Drafted") // Drafted/Pending Signature/Signed/Expired/Terminated
+  contractStatus          String  @default("Drafted") // Drafted/Pending Signature/Signed/Expired/Contract Ended/Terminated
   noticePeriod            String?
   contractUpload          String?
   signedContractUpload    String?

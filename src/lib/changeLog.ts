@@ -5,6 +5,7 @@ import { prisma } from "./prisma";
 export const FIELD_LABELS: Record<string, Record<string, string>> = {
   personal: {
     name: "Name",
+    talentStatus: "Talent status",
     nric: "FIN / NRIC",
     dateOfBirth: "Date of birth",
     sex: "Sex",
